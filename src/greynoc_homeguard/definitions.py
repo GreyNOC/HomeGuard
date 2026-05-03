@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -239,7 +239,7 @@ class DefinitionManager:
         if updated:
             try:
                 clean = updated.replace("Z", "+00:00")
-                age_days = (datetime.now(UTC) - datetime.fromisoformat(clean)).days
+                age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(clean)).days
             except Exception:
                 age_days = None
         update_status = str(data.get("update_status") or UPDATE_STATUS_NEVER)
@@ -271,7 +271,7 @@ class DefinitionManager:
         statuses = dict(data.get("source_status") or {})
         feed_versions = dict(data.get("feed_versions") or {})
         feed_timestamps = dict(data.get("feed_timestamps") or {})
-        now = datetime.now(UTC).replace(microsecond=0)
+        now = datetime.now(timezone.utc).replace(microsecond=0)
         any_failure = False
         any_success = False
 

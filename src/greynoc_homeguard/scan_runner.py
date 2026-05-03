@@ -10,7 +10,7 @@ known-device store and protection history.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -80,7 +80,7 @@ def _attach_endpoint_scan(report: HomeGuardReport, findings: list[Finding], meta
 
 
 def _scan_dir(timestamp: datetime | None = None) -> Path:
-    when = (timestamp or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    when = (timestamp or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     return default_output_dir() / when
 
 

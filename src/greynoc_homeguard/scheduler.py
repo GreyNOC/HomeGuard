@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +82,7 @@ class ScheduleManager:
         return self.config
 
     def mark_ran(self, timestamp: datetime | None = None) -> None:
-        when = (timestamp or datetime.now(UTC)).replace(microsecond=0)
+        when = (timestamp or datetime.now(timezone.utc)).replace(microsecond=0)
         self.config.last_run = when.isoformat().replace("+00:00", "Z")
         self.config.next_run = self._compute_next_run(reference=when)
         self.save()
@@ -90,7 +90,7 @@ class ScheduleManager:
     def is_due(self, *, now: datetime | None = None) -> bool:
         if not self.config.enabled:
             return False
-        now = now or datetime.now(UTC)
+        now = now or datetime.now(timezone.utc)
         next_run = _parse_dt(self.config.next_run)
         if next_run is None:
             return True
@@ -99,7 +99,7 @@ class ScheduleManager:
     def _compute_next_run(self, *, reference: datetime | None = None) -> str:
         if not self.config.enabled:
             return ""
-        ref = reference or _parse_dt(self.config.last_run) or datetime.now(UTC)
+        ref = reference or _parse_dt(self.config.last_run) or datetime.now(timezone.utc)
         next_dt = ref + timedelta(seconds=self.config.interval_seconds())
         return next_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -111,7 +111,7 @@ def _parse_dt(value: str) -> datetime | None:
         clean = value.replace("Z", "+00:00")
         dt = datetime.fromisoformat(clean)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt.astimezone(UTC)
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
     except ValueError:
         return None
