@@ -308,7 +308,6 @@ scripts/compile_macos.sh        # macOS app build helper
 src/greynoc_homeguard/
   cli.py                        # command-line interface
   gui.py                        # desktop GUI / Protection Center
-  gui_launcher.py               # PyInstaller entrypoint
   network.py                    # safe local network discovery
   engine.py                     # report orchestrator that calls the detection engine
   detection.py                  # rule-driven HomeGuard detection engine
