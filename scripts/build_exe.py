@@ -1,10 +1,8 @@
-"""Build a Windows executable for HomeGuard via PyInstaller.
+"""Shared build helpers used by the Electron build pipeline.
 
-Output: dist/HomeGuard/HomeGuard.exe (one-folder build)
-
-By default this bumps the patch version in pyproject.toml and __init__.py
-before building. Authenticode signing runs when a signing certificate is
-provided through environment variables:
+Provides version bumping, privacy auditing, dev-artifact cleanup, version
+info generation, and Authenticode signing utilities. Authenticode signing
+runs when a signing certificate is provided through environment variables:
 
   HOMEGUARD_SIGN_CERT_PATH       path to a .pfx/.p12 code-signing certificate
   HOMEGUARD_SIGN_CERT_PASSWORD   password for the certificate file
@@ -18,13 +16,11 @@ Set HOMEGUARD_REQUIRE_SIGNING=1 to fail the build if signing cannot run.
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import shutil
 import stat
 import subprocess
-import sys
 from pathlib import Path
 
 APP_NAME = "HomeGuard"
@@ -64,21 +60,6 @@ AUDIT_EXCLUDE_FILES = {
     f"{APP_NAME}.spec",
     "HomeGuard-Core.spec",
 }
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build HomeGuard for Windows.")
-    parser.add_argument(
-        "--no-version-bump",
-        action="store_true",
-        help="Build without bumping the patch version first.",
-    )
-    parser.add_argument(
-        "--require-signing",
-        action="store_true",
-        help="Fail if Authenticode signing is unavailable or not configured.",
-    )
-    return parser.parse_args()
 
 
 def _sensitive_tokens(repo: Path) -> list[str]:
@@ -296,68 +277,3 @@ def _sign_executable(output: Path, *, require_signing: bool) -> bool:
     subprocess.check_call([signtool, "verify", "/pa", "/v", str(output)])
     print(f"Signed and verified: {output}")
     return True
-
-
-def main() -> int:
-    args = _parse_args()
-    repo = Path(__file__).resolve().parents[1]
-    entry = repo / "src" / "greynoc_homeguard" / "gui_launcher.py"
-    dist = repo / "dist"
-    build = repo / "build"
-    pyproject = repo / "pyproject.toml"
-
-    if not entry.exists():
-        print(f"Missing GUI launcher: {entry}", file=sys.stderr)
-        return 1
-
-    _remove_dev_artifacts(repo)
-    _privacy_audit(repo)
-
-    version = _read_version(pyproject)
-    if not args.no_version_bump and os.environ.get("HOMEGUARD_SKIP_VERSION_BUMP") != "1":
-        version = _bump_patch_version(repo)
-    else:
-        print(f"Version unchanged: {version}")
-
-    target = dist / APP_NAME
-    for folder in (target, build):
-        if folder.exists():
-            shutil.rmtree(folder)
-    version_file = _write_version_info(repo, version)
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--onedir",
-        "--windowed",
-        "--name",
-        APP_NAME,
-        "--distpath",
-        str(dist),
-        "--workpath",
-        str(build),
-        "--version-file",
-        str(version_file),
-        "--collect-all",
-        "reportlab",
-        "--collect-all",
-        "pystray",
-        "--collect-all",
-        "PIL",
-        str(entry),
-    ]
-    print("Running:", " ".join(str(part) for part in cmd))
-    subprocess.check_call(cmd, cwd=repo)
-    exe_suffix = ".exe" if os.name == "nt" else ""
-    output = target / f"{APP_NAME}{exe_suffix}"
-    if os.name == "nt":
-        _sign_executable(output, require_signing=args.require_signing)
-    print(f"Built: {output}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
