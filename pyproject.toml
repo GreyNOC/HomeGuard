@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "homeguard"
+version = "1.0.2"
+description = "Consumer-friendly home network security suite: scans devices, tracks trust/quarantine, updates CVE/KEV intelligence, and produces HomeGuard reports."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "GreyNOC" }]
+license = "MIT"
+keywords = ["cybersecurity", "home-network", "soc", "network-discovery", "security-report", "antivirus"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Environment :: X11 Applications",
+  "Intended Audience :: End Users/Desktop",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+]
+dependencies = ["reportlab>=4.0"]
+
+[project.optional-dependencies]
+dev = ["build>=1.0", "pytest>=7.0"]
+exe = ["pyinstaller>=6.0"]
+tray = ["pystray>=0.19", "pillow>=10.0"]
+mobile = ["kivy>=2.3"]
+
+[project.scripts]
+homeguard = "greynoc_homeguard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

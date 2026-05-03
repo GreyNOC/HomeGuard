@@ -1,0 +1,189 @@
+const fs = require("fs");
+const path = require("path");
+const { spawnSync } = require("child_process");
+
+const root = path.resolve(__dirname, "..");
+const required = [
+  "package.json",
+  "electron/main.js",
+  "electron/preload.js",
+  "electron/renderer/index.html",
+  "electron/renderer/styles.css",
+  "electron/renderer/renderer.js",
+];
+
+for (const relativePath of required) {
+  const absolutePath = path.join(root, relativePath);
+  if (!fs.existsSync(absolutePath)) {
+    throw new Error(`Missing ${relativePath}`);
+  }
+}
+
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+if (packageJson.main !== "electron/main.js") {
+  throw new Error("package.json does not point at the Electron main process.");
+}
+
+const main = fs.readFileSync(path.join(root, "electron", "main.js"), "utf8");
+if (!main.includes("frame: false")) {
+  throw new Error("Electron BrowserWindow is not configured as frameless.");
+}
+
+if (!main.includes('window.on("minimize"') || !main.includes("hideWindowToTray(window)")) {
+  throw new Error("Minimize is not wired to hide the window to the tray.");
+}
+
+if (!main.includes("ensureTray();") || !main.includes("nativeImage.createFromBuffer")) {
+  throw new Error("Tray icon is not initialized with the scan indicator artwork.");
+}
+
+if (!main.includes("bundledHomeGuardExecutable") || !main.includes("process.resourcesPath")) {
+  throw new Error("Packaged Electron builds are not wired to the bundled HomeGuard backend.");
+}
+
+for (const channel of [
+  "homeguard:scan",
+  "homeguard:scan-indicator",
+  "homeguard:update-definitions",
+  "homeguard:definitions-status",
+  "homeguard:history",
+  "homeguard:devices",
+  "homeguard:schedule",
+  "homeguard:device-trust",
+  "homeguard:device-label",
+  "homeguard:device-remove",
+  "homeguard:history-state",
+  "homeguard:history-retention",
+  "homeguard:schedule-save",
+  "homeguard:log-state",
+  "homeguard:logs-folder",
+  "homeguard:window-action",
+  "homeguard:minimize-to-tray",
+  "homeguard:save-html-as",
+  "homeguard:admin-access",
+]) {
+  if (!main.includes(channel)) {
+    throw new Error(`Missing IPC channel ${channel}`);
+  }
+}
+
+const preload = fs.readFileSync(path.join(root, "electron", "preload.js"), "utf8");
+for (const apiName of [
+  "devices",
+  "setScanIndicator",
+  "schedule",
+  "setDeviceTrust",
+  "setDeviceLabel",
+  "removeDevice",
+  "historyState",
+  "setHistoryRetention",
+  "saveSchedule",
+  "logState",
+  "logsFolder",
+  "adminAccess",
+  "minimizeToTray",
+  "saveHtmlAs",
+  "windowAction",
+]) {
+  if (!preload.includes(`${apiName}:`)) {
+    throw new Error(`Missing preload API ${apiName}`);
+  }
+}
+
+const css = fs.readFileSync(path.join(root, "electron", "renderer", "styles.css"), "utf8");
+if (!css.includes("--color-app-bg: #05070a")) {
+  throw new Error("Renderer app background is not the dark GreyNOC theme.");
+}
+
+if (!css.includes("--color-blue: #174ea6") || !css.includes("--color-scan: #ef233c")) {
+  throw new Error("Renderer buttons are not using the original HomeGuard button colors.");
+}
+
+if (css.includes("background: white")) {
+  throw new Error("Renderer still contains white panel styling.");
+}
+
+if (!css.includes(".scan-orb.is-active") || !css.includes("scan-orb-spin")) {
+  throw new Error("Renderer scan indicator is not wired to active scan state.");
+}
+
+const renderer = fs.readFileSync(path.join(root, "electron", "renderer", "renderer.js"), "utf8");
+if (!renderer.includes("activeScan.addEventListener(\"change\", updateScanIndicator)")) {
+  throw new Error("Active scan toggle does not drive the scan indicator.");
+}
+if (!renderer.includes("Active scan on") || !renderer.includes("Scanning now")) {
+  throw new Error("Active scan state is not labeled under the scan indicator.");
+}
+
+const scanRunner = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "scan_runner.py"), "utf8");
+if (
+  !scanRunner.includes("passive_only=not active") ||
+  !scanRunner.includes("allow_ping_sweep=active") ||
+  !scanRunner.includes("allow_tcp_port_check=active") ||
+  !scanRunner.includes("engine.build_report")
+) {
+  throw new Error("Active scans are not wired through network discovery and the detection engine.");
+}
+
+function pythonCandidates() {
+  const localPython =
+    process.platform === "win32"
+      ? path.join(root, ".venv", "Scripts", "python.exe")
+      : path.join(root, ".venv", "bin", "python");
+  const candidates = [];
+  if (process.env.HOMEGUARD_PYTHON || process.env.PYTHON) {
+    candidates.push({ command: process.env.HOMEGUARD_PYTHON || process.env.PYTHON, prefix: [] });
+  }
+  if (fs.existsSync(localPython)) {
+    candidates.push({ command: localPython, prefix: [] });
+  }
+  if (process.platform === "win32") {
+    candidates.push({ command: "py", prefix: ["-3"] });
+    candidates.push({ command: "python", prefix: [] });
+  } else {
+    candidates.push({ command: "python3", prefix: [] });
+    candidates.push({ command: "python", prefix: [] });
+  }
+  return candidates;
+}
+
+let pythonCheck = null;
+const pythonErrors = [];
+for (const candidate of pythonCandidates()) {
+  const result = spawnSync(
+    candidate.command,
+    [...candidate.prefix, "-m", "greynoc_homeguard", "definitions-status"],
+    {
+    cwd: root,
+    env: {
+      ...process.env,
+      PYTHONPATH: [path.join(root, "src"), process.env.PYTHONPATH || ""]
+        .filter(Boolean)
+        .join(path.delimiter),
+      PYTHONDONTWRITEBYTECODE: "1",
+    },
+    encoding: "utf8",
+    windowsHide: true,
+  },
+  );
+  if (result.status === 0) {
+    pythonCheck = result;
+    break;
+  }
+  pythonErrors.push(result.error ? result.error.message : result.stderr || result.stdout || "unknown failure");
+}
+
+if (!pythonCheck) {
+  const allBlocked = pythonErrors.length > 0 && pythonErrors.every((message) => message.includes("EPERM"));
+  if (allBlocked) {
+    console.warn("Python subprocess smoke check skipped: this sandbox blocks Node from spawning Python.");
+  } else {
+    throw new Error(`Python CLI wiring failed: ${pythonErrors.join(" | ")}`);
+  }
+}
+
+if (pythonCheck && !pythonCheck.stdout.includes("HomeGuard security definitions")) {
+  throw new Error("Python CLI wiring did not return the expected HomeGuard output.");
+}
+
+console.log("Electron frontend smoke check passed.");

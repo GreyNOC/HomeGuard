@@ -1,0 +1,23 @@
+{
+  "name": "homeguard-electron",
+  "version": "1.0.2",
+  "private": true,
+  "description": "Electron frontend for HomeGuard.",
+  "author": "GreyNOC",
+  "main": "electron/main.js",
+  "scripts": {
+    "android:debug": "bash scripts/compile_android.sh debug",
+    "android:release": "bash scripts/compile_android.sh release",
+    "android:aab": "bash scripts/compile_android.sh aab",
+    "electron": "electron .",
+    "electron:dist": "electron-builder --win dir --config electron-builder.json",
+    "start": "electron .",
+    "smoke": "node electron/smoke.js",
+    "test": "python -m unittest discover -s tests -v",
+    "release:gate": "powershell -ExecutionPolicy Bypass -File scripts/release_gate.ps1"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3"
+  }
+}

@@ -1,0 +1,27 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.spec
+!mobile/android/buildozer.spec
+build/
+dist/
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+out/
+*.exe
+*.dll
+*.so
+*.dylib
+.DS_Store
+
+.venv-build/
+node_modules/
+npm-debug.log*
+.idea/
+FInished Project/
+reference/
+src/*.egg-info/

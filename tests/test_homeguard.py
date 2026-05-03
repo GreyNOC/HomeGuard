@@ -1,0 +1,661 @@
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in os.sys.path:
+    os.sys.path.insert(0, str(SRC))
+
+# Force a per-test temporary HOMEGUARD_DATA_DIR before importing modules that
+# read paths at import time.
+_TMP_ROOT = tempfile.mkdtemp(prefix="hg_test_")
+os.environ.setdefault("HOMEGUARD_DATA_DIR", _TMP_ROOT)
+
+
+from greynoc_homeguard import cli  # noqa: E402
+from greynoc_homeguard.baseline import (  # noqa: E402
+    BaselineStore,
+    TRUST_QUARANTINED,
+    TRUST_TRUSTED,
+)
+from greynoc_homeguard.definitions import (  # noqa: E402
+    DefinitionManager,
+    UPDATE_STATUS_CURRENT,
+    UPDATE_STATUS_FAILED,
+    UPDATE_STATUS_NEVER,
+)
+from greynoc_homeguard.engine import HomeGuardEngine, build_family_summary  # noqa: E402
+from greynoc_homeguard.firewall import (  # noqa: E402
+    close_local_port,
+    finding_is_local,
+    port_from_finding,
+    reopen_local_port,
+    rule_name,
+)
+from greynoc_homeguard.history import ProtectionHistory  # noqa: E402
+from greynoc_homeguard.logging_setup import setup_logging  # noqa: E402
+from greynoc_homeguard.models import Device  # noqa: E402
+from greynoc_homeguard.network import parse_arp_table, parse_neighbor_table  # noqa: E402
+from greynoc_homeguard.paths import ensure_app_dirs, user_data_dir  # noqa: E402
+from greynoc_homeguard.privacy import privacy_findings, scrub_text  # noqa: E402
+from greynoc_homeguard.protection import (  # noqa: E402
+    DEVICE_NEW,
+    DEVICE_RISKY,
+    DEVICE_TRUSTED,
+    NETWORK_ACTION,
+    UPDATES_NEVER,
+    compute_protection_status,
+)
+from greynoc_homeguard.reports import export_report  # noqa: E402
+from greynoc_homeguard.scan_runner import run_full_scan  # noqa: E402
+from greynoc_homeguard.scheduler import ScheduleManager  # noqa: E402
+from greynoc_homeguard.settings import AppSettings  # noqa: E402
+from greynoc_homeguard.tray import TrayController  # noqa: E402
+from greynoc_homeguard.virus_scanner import (  # noqa: E402
+    analyze_processes,
+    run_endpoint_malware_scan,
+    scan_downloads,
+)
+
+
+class _AppDataMixin:
+    def _isolate(self) -> Path:
+        tmp = tempfile.mkdtemp(prefix="hg_case_")
+        os.environ["HOMEGUARD_DATA_DIR"] = tmp
+        # Re-create app dirs under the new root
+        ensure_app_dirs()
+        return Path(tmp)
+
+
+class NetworkParserTests(unittest.TestCase):
+    def test_parse_windows_arp_table(self):
+        text = """
+Interface: 192.168.1.10 --- 0x13
+  Internet Address      Physical Address      Type
+  192.168.1.1           c8-3a-35-aa-bb-cc     dynamic
+  192.168.1.40          b8-78-2e-44-55-66     dynamic
+"""
+        hosts = parse_arp_table(text)
+        self.assertEqual(len(hosts), 2)
+        self.assertEqual(hosts[0].ip, "192.168.1.1")
+        self.assertEqual(hosts[0].mac_address, "c8:3a:35:aa:bb:cc")
+
+    def test_parse_linux_neighbor_table(self):
+        text = "192.168.1.40 dev wlan0 lladdr b8:78:2e:44:55:66 REACHABLE"
+        hosts = parse_neighbor_table(text)
+        self.assertEqual(len(hosts), 1)
+        self.assertEqual(hosts[0].interface, "wlan0")
+        self.assertEqual(hosts[0].status, "reachable")
+
+
+class DetectionEngineTests(unittest.TestCase):
+    def test_engine_flags_telnet(self):
+        device = Device(ip="192.168.1.40", hostname="camera", open_ports=[23])
+        report = HomeGuardEngine().build_report([device])
+        rule_ids = {finding.rule_id for finding in report.findings}
+        self.assertIn("risky_port_23", rule_ids)
+        telnet = next(f for f in report.findings if f.rule_id == "risky_port_23")
+        self.assertEqual(telnet.severity, "high")
+
+    def test_baseline_new_device(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            device = Device(ip="192.168.1.88", mac_address="00:11:22:33:44:55")
+            report = HomeGuardEngine().build_report([device], baseline=baseline)
+            self.assertIn("new_device", {f.rule_id for f in report.findings})
+            baseline.update([device])
+            baseline.save()
+            baseline2 = BaselineStore(Path(tmp) / "baseline.json").load()
+            report2 = HomeGuardEngine().build_report([device], baseline=baseline2)
+            self.assertNotIn("new_device", {f.rule_id for f in report2.findings})
+
+    def test_quarantined_device_is_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            device = Device(ip="192.168.1.50", mac_address="aa:bb:cc:dd:ee:ff", hostname="iot")
+            baseline.update([device])
+            baseline.set_trust(device.fingerprint(), TRUST_QUARANTINED)
+            report = HomeGuardEngine().build_report([device], baseline=baseline)
+            rule_ids = {f.rule_id for f in report.findings}
+            self.assertIn("quarantined_device", rule_ids)
+            high_or_critical = [f for f in report.findings if f.severity in {"high", "critical"}]
+            self.assertTrue(high_or_critical)
+
+    def test_unknown_remote_access_device_is_possible_intrusion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            device = Device(
+                ip="192.168.1.200",
+                mac_address="00:de:ad:be:ef:00",
+                hostname="unknown-laptop",
+                open_ports=[3389],
+            )
+            report = HomeGuardEngine().build_report([device], baseline=baseline)
+            finding = next(
+                f for f in report.findings if f.rule_id == "possible_unauthorized_access"
+            )
+            self.assertEqual(finding.category, "possible_intrusion")
+            self.assertIn(finding.severity, {"high", "critical"})
+
+    def test_remote_admin_cluster_is_flagged(self):
+        device = Device(ip="192.168.1.90", hostname="workstation", open_ports=[22, 80, 445, 3389])
+        report = HomeGuardEngine().build_report([device])
+        rule_ids = {f.rule_id for f in report.findings}
+        self.assertIn("remote_admin_cluster", rule_ids)
+
+    def test_smb_does_not_trigger_windows_remote_access_hint(self):
+        device = Device(ip="192.168.1.91", hostname="pc", open_ports=[445])
+        report = HomeGuardEngine().build_report([device])
+        rule_ids = {f.rule_id for f in report.findings}
+        self.assertNotIn("definition_hint_windows_remote_access", rule_ids)
+        self.assertNotIn("possible_unauthorized_access", rule_ids)
+
+    def test_rdp_triggers_windows_remote_access_hint(self):
+        device = Device(ip="192.168.1.92", hostname="pc", open_ports=[3389])
+        report = HomeGuardEngine().build_report([device])
+        rule_ids = {f.rule_id for f in report.findings}
+        self.assertIn("definition_hint_windows_remote_access", rule_ids)
+
+    def test_suspicious_backdoor_port_is_possible_malware(self):
+        device = Device(ip="192.168.1.93", hostname="unknown", open_ports=[4444])
+        report = HomeGuardEngine().build_report([device])
+        finding = next(f for f in report.findings if f.rule_id == "possible_malware_service")
+        self.assertEqual(finding.category, "possible_malware")
+        self.assertEqual(finding.severity, "high")
+
+
+class EndpointMalwareScannerTests(unittest.TestCase):
+    def test_process_scanner_flags_encoded_download_cradle(self):
+        findings, meta = analyze_processes(
+            [
+                {
+                    "pid": 1234,
+                    "name": "powershell.exe",
+                    "command_line": "powershell.exe -EncodedCommand AAAA Invoke-Expression DownloadString",
+                }
+            ]
+        )
+        self.assertEqual(meta["processes_reviewed"], 1)
+        self.assertTrue(any(f.category == "endpoint_process" for f in findings))
+        self.assertTrue(any(f.severity == "high" for f in findings))
+
+    def test_download_scanner_flags_recent_script_payloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = Path(tmp) / "invoice.js"
+            payload.write_text("WScript.Echo('test')", encoding="utf-8")
+            findings, meta = scan_downloads([Path(tmp)])
+        self.assertEqual(meta["download_files_reviewed"], 1)
+        self.assertEqual(findings[0].rule_id, "endpoint_browser_download_executable")
+        self.assertIn("sha256_first_128mb", findings[0].evidence)
+        self.assertTrue(meta["internal_file_scan"])
+
+    def test_internal_file_scanner_flags_content_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = Path(tmp) / "payload.txt"
+            payload.write_text("HOMEGUARD-INTERNAL-SCANNER-TEST-SIGNATURE", encoding="utf-8")
+            findings, meta = scan_downloads([Path(tmp)])
+        rule_ids = {finding.rule_id for finding in findings}
+        self.assertIn("endpoint_internal_file_signature", rule_ids)
+        self.assertGreaterEqual(meta["internal_file_scan_content_hits"], 1)
+
+    def test_endpoint_scan_does_not_launch_external_antivirus(self):
+        with mock.patch("greynoc_homeguard.virus_scanner.scan_persistence", return_value=([], {"persistence_entries_reviewed": 0})):
+            result = run_endpoint_malware_scan(
+                include_defender=True,
+                include_file_scan=False,
+                include_memory=False,
+                download_dirs=[],
+                process_rows=[],
+            )
+        self.assertEqual(result.metadata["external_antivirus"], "not_used")
+        self.assertEqual(result.metadata["external_antivirus_requested"], "ignored_internal_scanner_only")
+
+    def test_endpoint_scan_can_attach_findings_without_defender_or_memory(self):
+        with mock.patch("greynoc_homeguard.virus_scanner.scan_persistence", return_value=([], {"persistence_entries_reviewed": 0})):
+            result = run_endpoint_malware_scan(
+                include_defender=False,
+                include_memory=False,
+                download_dirs=[],
+                process_rows=[
+                    {
+                        "pid": 99,
+                        "name": "nc.exe",
+                        "command_line": "nc.exe -l -p 4444",
+                    }
+                ],
+            )
+        self.assertGreaterEqual(len(result.findings), 1)
+        self.assertEqual(result.metadata["scanner"], "GreyNOC Endpoint Malware Indicator Scanner")
+
+
+class TrustStoreTests(unittest.TestCase):
+    def test_trust_set_and_remove(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = BaselineStore(Path(tmp) / "k.json").load()
+            device = Device(ip="192.168.1.10", mac_address="00:11:22:33:44:55")
+            store.update([device])
+            self.assertTrue(store.set_trust(device.fingerprint(), TRUST_TRUSTED))
+            self.assertEqual(store.trust(device), TRUST_TRUSTED)
+            store.set_label(device.fingerprint(), owner="parent", device_type="laptop", notes="kitchen")
+            self.assertTrue(store.is_trusted(device))
+            self.assertEqual(store.get(device).get("owner"), "parent")
+            self.assertTrue(store.remove(device.fingerprint()))
+            self.assertFalse(store.known(device))
+
+
+class FirewallActionTests(unittest.TestCase):
+    def test_port_from_finding_prefers_evidence_port(self):
+        report = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.10", hostname="camera", open_ports=[23])]
+        )
+        finding = next(f for f in report.findings if f.rule_id == "risky_port_23")
+        self.assertEqual(port_from_finding(finding), 23)
+
+    def test_finding_is_local_uses_known_local_ips(self):
+        report = HomeGuardEngine().build_report([Device(ip="192.168.1.10", open_ports=[80])])
+        finding = report.findings[0]
+        self.assertTrue(finding_is_local(finding, ips={"192.168.1.10"}))
+        self.assertFalse(finding_is_local(finding, ips={"192.168.1.20"}))
+
+    def test_windows_close_port_replaces_rule_then_blocks(self):
+        calls = []
+
+        def runner(args, **_kwargs):
+            calls.append(args)
+            return mock.Mock(returncode=0, stdout="Ok.", stderr="")
+
+        with mock.patch("greynoc_homeguard.firewall.platform.system", return_value="Windows"):
+            result = close_local_port(3389, runner=runner)
+        self.assertTrue(result.ok)
+        self.assertEqual(calls[0][:4], ["netsh", "advfirewall", "firewall", "delete"])
+        self.assertEqual(calls[1][:4], ["netsh", "advfirewall", "firewall", "add"])
+        self.assertIn("action=block", calls[1])
+        self.assertIn("localport=3389", calls[1])
+        self.assertIn(f"name={rule_name(3389)}", calls[1])
+
+    def test_windows_reopen_port_deletes_homeguard_rule_only(self):
+        calls = []
+
+        def runner(args, **_kwargs):
+            calls.append(args)
+            return mock.Mock(returncode=0, stdout="Deleted.", stderr="")
+
+        with mock.patch("greynoc_homeguard.firewall.platform.system", return_value="Windows"):
+            result = reopen_local_port(3389, runner=runner)
+        self.assertTrue(result.ok)
+        self.assertEqual(len(calls), 1)
+        self.assertIn(f"name={rule_name(3389)}", calls[0])
+
+
+class DefinitionStatusTests(_AppDataMixin, unittest.TestCase):
+    def test_default_status_is_never_updated(self):
+        self._isolate()
+        manager = DefinitionManager()
+        status = manager.status()
+        self.assertEqual(status["update_status"], UPDATE_STATUS_NEVER)
+
+    def test_update_failure_marks_failed(self):
+        self._isolate()
+        manager = DefinitionManager()
+        with mock.patch(
+            "greynoc_homeguard.definitions._http_json",
+            side_effect=RuntimeError("network down"),
+        ):
+            status = manager.update_from_sources(nvd_days=1)
+        self.assertEqual(status["update_status"], UPDATE_STATUS_FAILED)
+
+    def test_update_success_marks_current(self):
+        self._isolate()
+        manager = DefinitionManager()
+        with mock.patch(
+            "greynoc_homeguard.definitions._http_json",
+            side_effect=[
+                {"vulnerabilities": [{"cveID": "CVE-2099-0001"}], "catalogVersion": "1.0"},
+                {"vulnerabilities": []},
+            ],
+        ):
+            status = manager.update_from_sources(nvd_days=1)
+        self.assertEqual(status["update_status"], UPDATE_STATUS_CURRENT)
+        self.assertGreaterEqual(status["kev_count"], 1)
+        self.assertGreaterEqual(status["record_count"], 1)
+
+
+class ProtectionStatusTests(unittest.TestCase):
+    def test_clean_scan_is_protected_and_never_updated(self):
+        protection = compute_protection_status([], [], definition_status={})
+        self.assertEqual(protection.updates, UPDATES_NEVER)
+        self.assertEqual(protection.device_trust, DEVICE_TRUSTED)
+
+    def test_quarantined_device_triggers_action_needed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "k.json").load()
+            device = Device(ip="192.168.1.66", mac_address="aa:bb:cc:dd:ee:ff")
+            baseline.update([device])
+            baseline.set_trust(device.fingerprint(), TRUST_QUARANTINED)
+            findings = HomeGuardEngine().detection_engine.evaluate([device], baseline)
+            protection = compute_protection_status(
+                [device], findings, definition_status={}, baseline=baseline
+            )
+            self.assertEqual(protection.network, NETWORK_ACTION)
+            self.assertEqual(protection.quarantined_count, 1)
+
+    def test_new_device_triggers_new_devices_card(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "k.json").load()
+            device = Device(ip="192.168.1.77", mac_address="aa:bb:cc:dd:00:11")
+            findings = HomeGuardEngine().detection_engine.evaluate([device], baseline)
+            protection = compute_protection_status(
+                [device], findings, definition_status={}, baseline=baseline
+            )
+            self.assertIn(protection.device_trust, {DEVICE_NEW, DEVICE_RISKY})
+
+
+class FamilySummaryTests(unittest.TestCase):
+    def test_family_summary_counts_owners_and_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "k.json").load()
+            d1 = Device(ip="192.168.1.20", mac_address="11:22:33:44:55:66", hostname="phone")
+            d2 = Device(ip="192.168.1.21", mac_address="11:22:33:44:55:67", hostname="laptop")
+            baseline.update([d1, d2])
+            baseline.set_label(d1.fingerprint(), owner="parent", device_type="phone")
+            baseline.set_label(d2.fingerprint(), owner="child", device_type="laptop")
+            summary = build_family_summary([d1, d2], baseline)
+            self.assertEqual(summary["by_owner"].get("parent"), 1)
+            self.assertEqual(summary["by_owner"].get("child"), 1)
+            self.assertEqual(summary["by_type"].get("phone"), 1)
+            self.assertEqual(summary["by_type"].get("laptop"), 1)
+
+
+class ReportExportTests(unittest.TestCase):
+    def test_export_writes_all_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report([Device(ip="192.168.1.1", open_ports=[80])])
+            paths = export_report(report, tmp)
+            for key in [
+                "json",
+                "markdown",
+                "html",
+                "pdf",
+                "devices",
+                "findings",
+                "findings_csv",
+                "manifest",
+            ]:
+                self.assertTrue(paths[key].exists(), f"missing {key}")
+            html = paths["html"].read_text(encoding="utf-8")
+            self.assertIn("Network Protection", html)
+            self.assertIn("Device Trust", html)
+            self.assertIn("Security Updates", html)
+            self.assertIn("HomeGuard Detection Engine", html)
+            self.assertGreater(paths["pdf"].stat().st_size, 500)
+
+    def test_html_includes_recommended_actions_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report([Device(ip="192.168.1.25", hostname="camera", open_ports=[23])])
+            paths = export_report(report, tmp)
+            html = paths["html"].read_text(encoding="utf-8")
+            self.assertIn("Recommended Actions", html)
+
+    def test_html_uses_dark_greynoc_theme(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report([Device(ip="192.168.1.1", open_ports=[80])])
+            paths = export_report(report, tmp)
+            html = paths["html"].read_text(encoding="utf-8")
+            self.assertIn("background: #05070A", html)
+            self.assertIn("background: #0B0F16", html)
+            self.assertIn("background:#174EA6", html)
+            self.assertNotIn("linear-gradient", html)
+
+    def test_exported_reports_are_share_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report(
+                [Device(ip="192.168.1.10", hostname="laptop", mac_address="00:11:22:33:44:55")],
+                scan_metadata={
+                    "baseline_path": r"C:\Users\person\AppData\Local\GreyNOC\HomeGuard\known_devices.json",
+                    "diagnostic": "HOME=C:\\Users\\person USERNAME=person token=abcd",
+                    "key": "-----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----",
+                },
+            )
+            paths = export_report(report, tmp)
+            for key in ("json", "findings", "markdown", "html", "devices", "findings_csv"):
+                text = paths[key].read_text(encoding="utf-8", errors="ignore")
+                self.assertEqual(privacy_findings(text), [], f"{key} leaked private content")
+                self.assertNotIn("00:11:22:33:44:55", text)
+            for key in ("json", "markdown", "html", "devices"):
+                text = paths[key].read_text(encoding="utf-8", errors="ignore")
+                self.assertIn("device id ending 44:55", text)
+
+
+class PrivacyRedactionTests(unittest.TestCase):
+    def test_scrub_text_removes_paths_env_and_secrets(self):
+        text = (
+            r"C:\Users\person\AppData\Local\GreyNOC HOME=C:\Users\person "
+            "USERNAME=person token=abcd -----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----"
+        )
+        scrubbed = scrub_text(text)
+        self.assertEqual(privacy_findings(scrubbed), [])
+        self.assertIn("local app data", scrubbed)
+
+    def test_logging_redacts_private_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["HOMEGUARD_DATA_DIR"] = tmp
+            import greynoc_homeguard.logging_setup as logging_setup
+
+            logger = logging_setup.logging.getLogger("greynoc_homeguard")
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+                handler.close()
+            logging_setup._initialized = False
+            log_path = setup_logging()
+            logger.info(r"diagnostic path C:\Users\person\AppData\Local token=abcd")
+            for handler in logger.handlers:
+                handler.flush()
+            text = log_path.read_text(encoding="utf-8")
+            self.assertEqual(privacy_findings(text), [])
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+                handler.close()
+            logging_setup._initialized = False
+
+
+class ScanWorkflowTests(_AppDataMixin, unittest.TestCase):
+    def test_core_scan_workflow_does_not_crash(self):
+        self._isolate()
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("greynoc_homeguard.scan_runner.detect_local_interfaces", return_value=[]):
+                with mock.patch(
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    return_value=[Device(ip="192.168.1.20", hostname="router", open_ports=[80])],
+                ):
+                    report, paths, entry = run_full_scan(output_dir=tmp, update_known_devices=False)
+            self.assertEqual(report.devices[0].ip, "192.168.1.20")
+            self.assertTrue(paths["html"].exists())
+            self.assertEqual(entry.report_id, report.report_id)
+
+
+class HistoryTests(_AppDataMixin, unittest.TestCase):
+    def test_history_records_scan(self):
+        self._isolate()
+        history = ProtectionHistory().load()
+        report = HomeGuardEngine().build_report([Device(ip="192.168.1.1", open_ports=[80])])
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = export_report(report, tmp)
+            history.add(report, paths)
+            history.save()
+        loaded = ProtectionHistory().load()
+        self.assertEqual(len(loaded.entries()), 1)
+        latest = loaded.latest()
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.report_id, report.report_id)
+
+
+class ScheduleTests(_AppDataMixin, unittest.TestCase):
+    def test_schedule_persists(self):
+        self._isolate()
+        manager = ScheduleManager()
+        manager.load()
+        manager.set(enabled=True, interval="daily", background_monitor=True)
+        again = ScheduleManager()
+        cfg = again.load()
+        self.assertTrue(cfg.enabled)
+        self.assertEqual(cfg.interval, "daily")
+        self.assertTrue(cfg.background_monitor)
+
+
+class TrayTests(unittest.TestCase):
+    def test_tray_controller_reports_missing_optional_dependencies(self):
+        controller = TrayController(
+            on_show=lambda: None,
+            on_scan=lambda: None,
+            on_open_report=lambda: None,
+            on_update_definitions=lambda: None,
+            on_quit=lambda: None,
+        )
+        with mock.patch("greynoc_homeguard.tray._has_pystray", return_value=False):
+            self.assertFalse(controller.start())
+        self.assertFalse(controller.available)
+        self.assertIn("pystray", controller.error_message)
+
+
+class SettingsTests(unittest.TestCase):
+    def test_onboarding_can_be_completed_or_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            settings = AppSettings(path).load()
+            self.assertTrue(settings.onboarding_needed())
+            settings.mark_onboarding_skipped()
+            self.assertFalse(AppSettings(path).load().onboarding_needed())
+
+            path2 = Path(tmp) / "settings2.json"
+            settings2 = AppSettings(path2).load()
+            settings2.set_scan_defaults(active_scan=True, probe_all=False)
+            settings2.mark_onboarding_complete()
+            loaded = AppSettings(path2).load()
+            self.assertFalse(loaded.onboarding_needed())
+            self.assertTrue(loaded.scan_defaults()["active_scan"])
+
+    def test_ignored_findings_persist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            settings = AppSettings(path).load()
+            settings.ignore_finding("hg_test", title="Test finding")
+            self.assertIn("hg_test", AppSettings(path).load().ignored_finding_ids())
+            settings.unignore_finding("hg_test")
+            self.assertNotIn("hg_test", AppSettings(path).load().ignored_finding_ids())
+
+
+class CLITests(_AppDataMixin, unittest.TestCase):
+    def test_definitions_status_command(self):
+        self._isolate()
+        rc = cli.main(["definitions-status"])
+        self.assertEqual(rc, 0)
+
+    def test_schedule_show_command(self):
+        self._isolate()
+        rc = cli.main(["schedule", "show"])
+        self.assertEqual(rc, 0)
+
+    def test_devices_list_command_empty(self):
+        self._isolate()
+        rc = cli.main(["devices", "list"])
+        self.assertEqual(rc, 0)
+
+    def test_analyze_command(self):
+        self._isolate()
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / "devices.json"
+            input_path.write_text(
+                json.dumps(
+                    [{"ip": "192.168.1.10", "mac_address": "00:11:22:33:44:55", "hostname": "tv", "open_ports": [80]}]
+                ),
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            rc = cli.main(["analyze", "--input", str(input_path), "--out", str(out)])
+            self.assertEqual(rc, 0)
+            self.assertTrue((out / "report.html").exists())
+            self.assertTrue((out / "findings.csv").exists())
+
+
+class AppDataPathTests(unittest.TestCase):
+    def test_data_dir_under_temporary_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["HOMEGUARD_DATA_DIR"] = tmp
+            self.assertEqual(str(user_data_dir()), tmp)
+
+
+class BuildScriptTests(unittest.TestCase):
+    def test_build_scripts_exist(self):
+        repo = Path(__file__).resolve().parents[1]
+        for path in [
+            "package.json",
+            "run_electron.bat",
+            "electron/main.js",
+            "electron/preload.js",
+            "electron/renderer/index.html",
+            "electron/renderer/styles.css",
+            "electron/renderer/renderer.js",
+            "electron/smoke.js",
+            "scripts/build_exe.py",
+            "scripts/build_windows_installer.ps1",
+            "scripts/sign_windows_artifact.ps1",
+            "scripts/verify_windows_signature.ps1",
+            "scripts/release_gate.ps1",
+            "scripts/build_macos.py",
+            "scripts/compile_android.sh",
+            "scripts/compile_macos.sh",
+            "scripts/notarize_macos.sh",
+            "installer/homeguard.iss",
+            "compile_exe.bat",
+            "mobile/android/buildozer.spec",
+            "mobile/android/main.py",
+            "mobile/android/README.md",
+        ]:
+            self.assertTrue((repo / path).exists(), f"missing {path}")
+
+    def test_signing_verification_script_fails_closed(self):
+        repo = Path(__file__).resolve().parents[1]
+        verify = (repo / "scripts" / "verify_windows_signature.ps1").read_text(encoding="utf-8")
+        sign = (repo / "scripts" / "sign_windows_artifact.ps1").read_text(encoding="utf-8")
+        installer = (repo / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
+        self.assertIn("Get-AuthenticodeSignature", verify)
+        self.assertIn('Status -ne "Valid"', verify)
+        self.assertIn("Set-AuthenticodeSignature", sign)
+        self.assertIn("HOMEGUARD_SIGN_CERT_PATH", sign)
+        self.assertIn("HOMEGUARD_SIGN_CERT_SHA1", sign)
+        self.assertIn("verify_windows_signature.ps1", installer)
+        self.assertIn("HomeGuard-Setup-v$Version.exe", installer)
+
+    def test_electron_ui_actions_are_wired_and_private(self):
+        repo = Path(__file__).resolve().parents[1]
+        html = (repo / "electron" / "renderer" / "index.html").read_text(encoding="utf-8")
+        renderer = (repo / "electron" / "renderer" / "renderer.js").read_text(encoding="utf-8")
+        main = (repo / "electron" / "main.js").read_text(encoding="utf-8")
+        for button_id in [
+            "scanButton",
+            "updateButton",
+            "openHtmlButton",
+            "openPdfButton",
+            "openFolderButton",
+            "devicesRefresh",
+            "historyOpenHtml",
+            "scheduleSave",
+            "logsOpenFolder",
+        ]:
+            self.assertIn(f'id="{button_id}"', html)
+            self.assertIn(f'$("{button_id}")', renderer)
+        for channel in ["homeguard:open-path", "homeguard:show-item", "homeguard:log-state"]:
+            self.assertIn(channel, main)
+        combined = "\n".join([html, renderer])
+        self.assertNotIn(r"C:\Users\\", combined)
+        self.assertNotIn("/Users/", combined)
+        self.assertNotIn("lorem ipsum", combined.lower())
+        self.assertNotIn("mock data", combined.lower())
+
+
+if __name__ == "__main__":
+    unittest.main()

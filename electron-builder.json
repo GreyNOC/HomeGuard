@@ -1,0 +1,39 @@
+{
+  "appId": "com.greynoc.homeguard",
+  "productName": "HomeGuard",
+  "asar": false,
+  "npmRebuild": false,
+  "directories": {
+    "output": "dist/electron"
+  },
+  "files": [
+    "package.json",
+    "electron/**/*",
+    "src/**/*",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
+  ],
+  "extraResources": [
+    {
+      "from": "build/electron-resources/backend",
+      "to": "backend",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "dir",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "executableName": "HomeGuard"
+  }
+}
