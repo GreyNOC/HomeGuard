@@ -9,6 +9,7 @@
     "android:debug": "bash scripts/compile_android.sh debug",
     "android:release": "bash scripts/compile_android.sh release",
     "android:aab": "bash scripts/compile_android.sh aab",
+    "cli": "node scripts/cli.js",
     "electron": "electron .",
     "electron:dist": "electron-builder --win dir --config electron-builder.json",
     "start": "electron .",
