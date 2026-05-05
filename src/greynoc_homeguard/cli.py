@@ -11,8 +11,6 @@ from .baseline import (
     OWNER_VALUES,
     DEVICE_TYPES,
     TRUST_VALUES,
-    TRUST_QUARANTINED,
-    TRUST_TRUSTED,
     TRUST_UNKNOWN,
 )
 from .dashboard import serve_report
@@ -21,27 +19,10 @@ from .engine import HomeGuardEngine
 from .history import ProtectionHistory
 from .logging_setup import setup_logging
 from .models import Device
-from .network import NetworkSensorConfig, detect_local_interfaces, discover_lan_hosts
 from .paths import default_baseline_path, default_output_dir, ensure_app_dirs
 from .reports import export_report
 from .scan_runner import run_full_scan
 from .scheduler import INTERVAL_VALUES, ScheduleManager
-
-
-def _parse_ports(value: str) -> list[int]:
-    ports: list[int] = []
-    for item in (value or "").split(","):
-        item = item.strip()
-        if not item:
-            continue
-        try:
-            port = int(item)
-        except ValueError:
-            raise argparse.ArgumentTypeError(f"Invalid port: {item}")
-        if not 0 < port <= 65535:
-            raise argparse.ArgumentTypeError(f"Port out of range: {item}")
-        ports.append(port)
-    return sorted(set(ports))
 
 
 def _load_devices(path: str | Path) -> list[Device]:
