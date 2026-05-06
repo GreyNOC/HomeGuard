@@ -11,10 +11,10 @@ from .models import Device, Finding
 
 SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 SEVERITY_SCORE = {"critical": 95.0, "high": 78.0, "medium": 54.0, "low": 26.0, "info": 8.0}
-CRITICAL_REMOTE_PORTS = {23, 3389, 5900, 445}
-REMOTE_ADMIN_PORTS = {22, 23, 3389, 5900}
+CRITICAL_REMOTE_PORTS = {23, 2323, 3389, 5900, 5938, 445}
+REMOTE_ADMIN_PORTS = {22, 23, 2323, 3389, 5900, 5938, 7547}
 FILE_SHARING_PORTS = {139, 445}
-SUSPICIOUS_MALWARE_PORTS = {4444, 5555, 6667, 31337}
+SUSPICIOUS_MALWARE_PORTS = {1080, 2323, 4444, 5555, 6667, 31337}
 SERVICE_CLUSTER_PORTS = {
     21,
     22,
@@ -24,13 +24,20 @@ SERVICE_CLUSTER_PORTS = {
     443,
     445,
     554,
+    1080,
+    2323,
+    3306,
     3389,
     4444,
     5555,
     5900,
+    5938,
     6667,
+    7547,
     8080,
     8443,
+    8888,
+    9100,
     31337,
 }
 
@@ -86,7 +93,7 @@ class HomeGuardDetectionEngine:
     """
 
     engine_name = "HomeGuard Detection Engine"
-    engine_version = "0.4.0"
+    engine_version = "0.5.0"
 
     def __init__(self, definitions: dict[str, Any] | None = None) -> None:
         self.definitions = definitions or {}

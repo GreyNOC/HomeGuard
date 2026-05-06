@@ -16,7 +16,7 @@ from .paths import definitions_file
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 NVD_CVE_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 DEFINITIONS_SCHEMA_VERSION = "1.0"
-STARTER_VERSION = "2026.05.02.1"
+STARTER_VERSION = "2026.05.06.1"
 
 DEFAULT_RISKY_PORTS = [
     {"port": 21, "service": "FTP", "severity": "medium", "why": "FTP is often unencrypted. Do not expose it unless you know why it is needed."},
@@ -26,13 +26,20 @@ DEFAULT_RISKY_PORTS = [
     {"port": 139, "service": "NetBIOS", "severity": "medium", "why": "Windows file-sharing services should not be reachable from untrusted devices."},
     {"port": 445, "service": "SMB", "severity": "medium", "why": "SMB file sharing can expose files if permissions are weak."},
     {"port": 554, "service": "RTSP", "severity": "medium", "why": "Camera streaming services can expose video feeds if default passwords are still used."},
+    {"port": 1080, "service": "SOCKS proxy", "severity": "medium", "category": "possible_malware", "why": "Port 1080 is a SOCKS proxy. Open SOCKS on a home device is uncommon and can be abused by malware as a relay or tunnel."},
+    {"port": 2323, "service": "Telnet alternate (Mirai-style)", "severity": "high", "category": "possible_malware", "why": "Port 2323 is a Telnet variant aggressively scanned by IoT botnets such as Mirai. It is unusual on home devices and should be investigated."},
+    {"port": 3306, "service": "MySQL", "severity": "medium", "why": "MySQL databases should not be exposed on the home LAN unless you specifically run a database server."},
+    {"port": 3389, "service": "Remote Desktop", "severity": "high", "why": "Remote Desktop should be disabled unless you intentionally use it."},
     {"port": 4444, "service": "Suspicious shell listener", "severity": "high", "category": "possible_malware", "why": "Port 4444 is commonly used by test tools, reverse shells, and unauthorized remote-control payloads. It should be investigated if you did not intentionally open it."},
     {"port": 5555, "service": "ADB or unauthorized debug bridge", "severity": "high", "category": "possible_malware", "why": "Port 5555 is often Android Debug Bridge or a similar debug service. On phones, TVs, and IoT devices it can allow remote control when exposed."},
+    {"port": 5900, "service": "VNC", "severity": "high", "why": "VNC remote-control services are risky when left open or weakly protected."},
+    {"port": 5938, "service": "TeamViewer", "severity": "high", "why": "TeamViewer-style remote-control services should only be reachable when you intentionally use them. Confirm the device and software are expected."},
     {"port": 6667, "service": "IRC bot/control channel", "severity": "medium", "category": "possible_malware", "why": "Port 6667 is commonly associated with IRC. Some botnets and malware families have used IRC-style command channels."},
+    {"port": 7547, "service": "TR-069 router management", "severity": "high", "why": "Port 7547 (CWMP/TR-069) is a router remote-management protocol that has been mass-exploited to recruit home routers into botnets. It should not be reachable from inside the LAN."},
     {"port": 8080, "service": "HTTP alternate", "severity": "low", "why": "Alternate web admin ports are common but should be reviewed."},
     {"port": 8443, "service": "HTTPS alternate", "severity": "low", "why": "Alternate web admin ports are common but should be reviewed."},
-    {"port": 3389, "service": "Remote Desktop", "severity": "high", "why": "Remote Desktop should be disabled unless you intentionally use it."},
-    {"port": 5900, "service": "VNC", "severity": "high", "why": "VNC remote-control services are risky when left open or weakly protected."},
+    {"port": 8888, "service": "HTTP alternate / common backdoor admin", "severity": "medium", "why": "Port 8888 hosts legitimate admin pages for some IoT devices but is also frequently used by backdoor or malware admin panels. Confirm the device is expected."},
+    {"port": 9100, "service": "Raw printing (JetDirect)", "severity": "medium", "why": "Raw print services can be abused to exfiltrate documents or send unwanted print jobs from anywhere on the LAN."},
     {"port": 31337, "service": "Known backdoor-style port", "severity": "high", "category": "possible_malware", "why": "Port 31337 is historically associated with backdoor tools. It is unusual on normal home devices and should be investigated."},
 ]
 
@@ -223,6 +230,28 @@ class DefinitionManager:
         if not isinstance(data, dict):
             data = _default_definitions()
         defaults = _default_definitions()
+        # Migrate built-in static rule fields (risky_ports, device_name_hints,
+        # product_hints) when the bundled starter version moves forward. Older
+        # installs would otherwise be stuck on whatever risky port list shipped
+        # the day they first ran HomeGuard, even after `update-definitions`,
+        # because that command only refreshes the KEV/CVE feeds.
+        feed_versions = dict(data.get("feed_versions") or {})
+        bundled_starter = str(feed_versions.get("starter") or "")
+        if bundled_starter != STARTER_VERSION:
+            data["risky_ports"] = defaults["risky_ports"]
+            data["device_name_hints"] = defaults["device_name_hints"]
+            data["product_hints"] = defaults["product_hints"]
+            feed_versions["starter"] = STARTER_VERSION
+            data["feed_versions"] = feed_versions
+            feed_timestamps = dict(data.get("feed_timestamps") or {})
+            feed_timestamps["starter"] = utcnow()
+            data["feed_timestamps"] = feed_timestamps
+            source_status = dict(data.get("source_status") or {})
+            source_status["starter"] = {
+                "ok": True,
+                "message": f"Starter definitions migrated to {STARTER_VERSION}.",
+            }
+            data["source_status"] = source_status
         for key, value in defaults.items():
             data.setdefault(key, value)
         return data
@@ -341,6 +370,45 @@ class DefinitionManager:
             data["update_status"] = UPDATE_STATUS_FAILED
         self.save(data)
         return self.status()
+
+
+DISCOVERY_BASE_PORTS: tuple[int, ...] = (53, 80, 443)
+
+
+def active_scan_ports(
+    definitions: dict[str, Any] | None = None,
+    *,
+    extras: tuple[int, ...] = DISCOVERY_BASE_PORTS,
+) -> list[int]:
+    """Return the active TCP probe port set for HomeGuard scans.
+
+    Sourced from the current ``risky_ports`` definitions plus a small set of
+    discovery defaults (DNS/HTTP/HTTPS) so unfamiliar but unrouted devices still
+    surface in the report. Centralizing this makes the scanner and the rule
+    catalog stay in sync — whenever a port is added to the definitions it is
+    automatically probed by active scans.
+    """
+
+    if definitions is None:
+        definitions = DefinitionManager().load()
+    ports: set[int] = set()
+    for row in (definitions.get("risky_ports") or []):
+        if not isinstance(row, dict):
+            continue
+        try:
+            port = int(row.get("port"))
+        except (TypeError, ValueError):
+            continue
+        if 0 < port <= 65535:
+            ports.add(port)
+    for port in extras:
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            continue
+        if 0 < value <= 65535:
+            ports.add(value)
+    return sorted(ports)
 
 
 def risky_ports_from_definitions(definitions: dict[str, Any]) -> dict[int, tuple[str, str, str, str]]:
