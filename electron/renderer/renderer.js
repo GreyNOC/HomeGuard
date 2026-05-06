@@ -68,14 +68,26 @@ const historyActionButtons = [
   $("historyOpenFolder"),
 ];
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[char]);
+function clearChildren(node) {
+  while (node.firstChild) {
+    node.removeChild(node.firstChild);
+  }
+}
+
+function appendCell(row, value, className = "") {
+  const cell = document.createElement("td");
+  if (className) {
+    cell.className = className;
+  }
+  cell.textContent = String(value ?? "-");
+  row.appendChild(cell);
+  return cell;
+}
+
+function appendEmptyRow(tbody, colspan, message) {
+  const row = document.createElement("tr");
+  appendCell(row, message, "empty-cell").colSpan = colspan;
+  tbody.appendChild(row);
 }
 
 function setActionDisabled(button, disabled, reason = "") {
@@ -217,23 +229,29 @@ async function runCommand(label, fn, options = {}) {
 }
 
 function renderDevices(rows) {
-  devicesTableBody.innerHTML = rows.length
-    ? rows.map((row) => {
-      const ports = Array.isArray(row.open_ports) && row.open_ports.length ? row.open_ports.join(", ") : "-";
-      const trust = row.trust || "unknown";
-      return `<tr data-fingerprint="${escapeHtml(row.fingerprint)}" class="trust-${escapeHtml(trust)}">
-        <td>${escapeHtml(row.ip || "-")}</td>
-        <td>${escapeHtml(row.hostname || row.vendor || "-")}</td>
-        <td>${escapeHtml(row.mac_address || "-")}</td>
-        <td>${escapeHtml(row.vendor || "-")}</td>
-        <td>${escapeHtml(trust)}</td>
-        <td>${escapeHtml(row.owner || "unknown")}</td>
-        <td>${escapeHtml(row.device_type || "unknown")}</td>
-        <td>${escapeHtml(ports)}</td>
-        <td>${escapeHtml(row.last_seen || "-")}</td>
-      </tr>`;
-    }).join("")
-    : `<tr><td colspan="9" class="empty-cell">No known devices yet. Run a scan to populate this list.</td></tr>`;
+  clearChildren(devicesTableBody);
+  if (!rows.length) {
+    appendEmptyRow(devicesTableBody, 9, "No known devices yet. Run a scan to populate this list.");
+  }
+  rows.forEach((row) => {
+    const ports = Array.isArray(row.open_ports) && row.open_ports.length ? row.open_ports.join(", ") : "-";
+    const trust = row.trust || "unknown";
+    const tableRow = document.createElement("tr");
+    tableRow.dataset.fingerprint = String(row.fingerprint || "");
+    tableRow.classList.add(`trust-${String(trust).replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "unknown"}`);
+    [
+      row.ip || "-",
+      row.hostname || row.vendor || "-",
+      row.mac_address || "-",
+      row.vendor || "-",
+      trust,
+      row.owner || "unknown",
+      row.device_type || "unknown",
+      ports,
+      row.last_seen || "-",
+    ].forEach((value) => appendCell(tableRow, value));
+    devicesTableBody.appendChild(tableRow);
+  });
   selectedDeviceFingerprint = "";
   refreshDisabledActions();
 }
@@ -299,16 +317,23 @@ async function removeDevice() {
 function renderHistory(result) {
   historyEntries = Array.isArray(result.entries) ? result.entries : [];
   historyRetention.value = result.retention || 30;
-  historyTableBody.innerHTML = historyEntries.length
-    ? historyEntries.map((entry, index) => `<tr data-index="${index}">
-        <td>${escapeHtml(entry.created_at || "-")}</td>
-        <td>${escapeHtml(entry.device_count ?? 0)}</td>
-        <td>${escapeHtml(entry.finding_count ?? 0)}</td>
-        <td>${escapeHtml(entry.highest_severity || "info")}</td>
-        <td>${escapeHtml(entry.overall_risk || "clean")}</td>
-        <td>${escapeHtml(entry.overall_score ?? 0)}</td>
-      </tr>`).join("")
-    : `<tr><td colspan="6" class="empty-cell">No scans yet.</td></tr>`;
+  clearChildren(historyTableBody);
+  if (!historyEntries.length) {
+    appendEmptyRow(historyTableBody, 6, "No scans yet.");
+  }
+  historyEntries.forEach((entry, index) => {
+    const row = document.createElement("tr");
+    row.dataset.index = String(index);
+    [
+      entry.created_at || "-",
+      entry.device_count ?? 0,
+      entry.finding_count ?? 0,
+      entry.highest_severity || "info",
+      entry.overall_risk || "clean",
+      entry.overall_score ?? 0,
+    ].forEach((value) => appendCell(row, value));
+    historyTableBody.appendChild(row);
+  });
   selectedHistoryIndex = -1;
   refreshDisabledActions();
 }

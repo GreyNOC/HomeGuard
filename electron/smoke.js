@@ -37,6 +37,10 @@ if (!main.includes("isAllowedReportOrLogPath") || !main.includes("appDataPath(\"
   throw new Error("Electron file-opening IPC is not limited to report/log paths.");
 }
 
+if (!main.includes("OPENABLE_REPORT_EXTENSIONS") || !main.includes("isAllowedOpenPath")) {
+  throw new Error("Electron file-opening IPC does not restrict report/log file types.");
+}
+
 if (!main.includes("(?:progress|scan)")) {
   throw new Error("Electron scan progress parser is not compatible with current CLI progress output.");
 }
@@ -125,6 +129,9 @@ if (!renderer.includes("activeScan.addEventListener(\"change\", updateScanIndica
 }
 if (!renderer.includes("Active scan on") || !renderer.includes("Scanning now")) {
   throw new Error("Active scan state is not labeled under the scan indicator.");
+}
+if (renderer.includes("devicesTableBody.innerHTML") || renderer.includes("historyTableBody.innerHTML")) {
+  throw new Error("Renderer data tables must be built with DOM nodes instead of HTML strings.");
 }
 
 const scanRunner = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "scan_runner.py"), "utf8");

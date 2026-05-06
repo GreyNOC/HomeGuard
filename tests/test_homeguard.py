@@ -1313,6 +1313,23 @@ class BuildScriptTests(unittest.TestCase):
         self.assertNotIn("/Users/", combined)
         self.assertNotIn("lorem ipsum", combined.lower())
         self.assertNotIn("mock data", combined.lower())
+        self.assertIn("Content-Security-Policy", html)
+        self.assertIn("OPENABLE_REPORT_EXTENSIONS", main)
+        self.assertNotIn("devicesTableBody.innerHTML", renderer)
+        self.assertNotIn("historyTableBody.innerHTML", renderer)
+
+    def test_exported_report_has_csp_without_inline_handlers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report(
+                [Device(ip="192.168.1.10", hostname="router", open_ports=[80])]
+            )
+            paths = export_report(report, Path(tmp))
+            html_text = paths["html"].read_text(encoding="utf-8")
+        self.assertIn("Content-Security-Policy", html_text)
+        self.assertIn("script-src 'nonce-", html_text)
+        self.assertNotIn("onclick=", html_text)
+        self.assertNotIn("oninput=", html_text)
+        self.assertNotIn("â", html_text)
 
 
 if __name__ == "__main__":
