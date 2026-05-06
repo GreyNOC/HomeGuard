@@ -206,6 +206,71 @@ class DetectionEngineTests(unittest.TestCase):
         # Discovery defaults are still included so unfamiliar devices show up.
         self.assertTrue({53, 80, 443} <= ports)
 
+    def test_hostname_only_baseline_detects_spoofer_on_different_ip(self):
+        # Baseline a device that has a hostname but no MAC. Then a second
+        # device joins the network claiming the same hostname from a
+        # different IP. Without the hostname-collision detector, the
+        # spoofer would inherit trust silently because Device.fingerprint()
+        # falls back to host:<name> when MAC is missing.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            original = Device(ip="192.168.1.50", hostname="alice-laptop")
+            baseline.update([original])
+            baseline.save()
+
+            spoofer = Device(ip="192.168.1.99", hostname="alice-laptop")
+            baseline2 = BaselineStore(Path(tmp) / "baseline.json").load()
+            self.assertTrue(baseline2.known(spoofer))  # naive lookup matches
+            self.assertFalse(baseline2.identity_matches(spoofer))
+
+            findings = HomeGuardEngine().detection_engine.evaluate(
+                [spoofer], baseline2
+            )
+            collision = next(f for f in findings if f.rule_id == "hostname_collision")
+            self.assertEqual(collision.category, "possible_intrusion")
+            self.assertIn(collision.severity, {"high", "critical"})
+            self.assertEqual(collision.evidence["stored_ip"], "192.168.1.50")
+            self.assertEqual(collision.evidence["current_ip"], "192.168.1.99")
+
+    def test_hostname_collision_silent_when_ip_matches(self):
+        # The same hostname-only device coming back at the same IP is not
+        # a collision; the detector must not produce false positives for
+        # ordinary repeat scans of imported / MAC-less devices.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            device = Device(ip="192.168.1.50", hostname="alice-laptop")
+            baseline.update([device])
+            baseline.save()
+            again = BaselineStore(Path(tmp) / "baseline.json").load()
+            findings = HomeGuardEngine().detection_engine.evaluate([device], again)
+            self.assertNotIn(
+                "hostname_collision", {f.rule_id for f in findings}
+            )
+
+    def test_mac_based_baseline_is_not_flagged_as_collision_on_ip_change(self):
+        # MAC is the identity for MAC-based fingerprints; legitimate DHCP
+        # rotation must never trigger the collision detector.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            device = Device(
+                ip="192.168.1.50",
+                mac_address="00:11:22:33:44:55",
+                hostname="alice-laptop",
+            )
+            baseline.update([device])
+            baseline.save()
+            rotated = Device(
+                ip="192.168.1.222",
+                mac_address="00:11:22:33:44:55",
+                hostname="alice-laptop",
+            )
+            again = BaselineStore(Path(tmp) / "baseline.json").load()
+            self.assertTrue(again.identity_matches(rotated))
+            findings = HomeGuardEngine().detection_engine.evaluate([rotated], again)
+            self.assertNotIn(
+                "hostname_collision", {f.rule_id for f in findings}
+            )
+
     def test_outdated_starter_definitions_are_migrated_on_load(self):
         # Older HomeGuard installs persisted an early `risky_ports` list
         # and never received new rules from `update-definitions` (which

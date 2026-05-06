@@ -93,7 +93,7 @@ class HomeGuardDetectionEngine:
     """
 
     engine_name = "HomeGuard Detection Engine"
-    engine_version = "0.5.0"
+    engine_version = "0.5.1"
 
     def __init__(self, definitions: dict[str, Any] | None = None) -> None:
         self.definitions = definitions or {}
@@ -136,6 +136,7 @@ class HomeGuardDetectionEngine:
             "possible_unauthorized_access": self._detect_possible_unauthorized_access,
             "remote_admin_cluster": self._detect_remote_admin_cluster,
             "possible_malware_service": self._detect_possible_malware_service,
+            "hostname_collision": self._detect_hostname_collision,
         }
         for rule in self.rules:
             if not rule.enabled:
@@ -237,6 +238,14 @@ class HomeGuardDetectionEngine:
                 category="possible_malware",
                 confidence=0.74,
             ),
+            DetectionRule(
+                rule_id="hostname_collision",
+                rule_type="hostname_collision",
+                title="Possible hostname spoofing detected",
+                severity="high",
+                category="possible_intrusion",
+                confidence=0.65,
+            ),
         ]
         risky_ports = risky_ports_from_definitions(definitions)
         for port, (service, severity, why, category) in sorted(risky_ports.items()):
@@ -335,6 +344,62 @@ class HomeGuardDetectionEngine:
                     "trust_state": "quarantined",
                     "owner": record.get("owner") or "unknown",
                     "device_type": record.get("device_type") or "unknown",
+                },
+            )
+        ]
+
+    def _detect_hostname_collision(
+        self, rule: DetectionRule, device: Device, baseline: BaselineStore | None
+    ) -> list[Finding]:
+        """Flag when an unknown device on the LAN reuses a baselined hostname.
+
+        ``Device.fingerprint()`` falls back to ``host:<hostname>`` when no
+        MAC is visible. Without this check, an attacker connecting to the
+        WiFi and configuring the same hostname as a baselined trusted
+        device would inherit that trust silently — ``new_device`` and
+        ``possible_unauthorized_access`` both gate on ``baseline.known()``
+        and would stay quiet. This detector cross-references the live IP
+        against the IP stored on the matching baseline record so the user
+        gets a clear high-priority signal on the first scan.
+        """
+
+        if baseline is None or not baseline.known(device):
+            return []
+        if baseline.identity_matches(device):
+            return []
+        record = baseline.get(device)
+        name = device.hostname or device.vendor or device.ip
+        stored_ip = str(record.get("ip") or "")
+        stored_mac = str(record.get("mac_address") or "")
+        return [
+            self._mk(
+                rule_id=rule.rule_id,
+                title=f"Possible hostname spoofing on the home network: {name}",
+                severity=rule.severity,
+                confidence=rule.confidence,
+                category=rule.category,
+                device=device,
+                plain_english=(
+                    f"HomeGuard previously saw a device named {name} at {stored_ip or 'a different IP'}. "
+                    f"It is now active at {device.ip}, which can happen if you replaced the device or its IP "
+                    "address rotated, but it is also one of the clearest signs of an unknown device on your "
+                    "network claiming the same name as a trusted one."
+                ),
+                recommended_actions=[
+                    "Confirm whether you replaced or reconfigured this device.",
+                    "If you did not, treat the new device as untrusted: change the WiFi password and review "
+                    "the router's connected-device list for unfamiliar entries.",
+                    "Remove the old known-device entry in HomeGuard once you have verified the change so the "
+                    "alert clears on the next scan.",
+                ],
+                evidence={
+                    "fingerprint": device.fingerprint(),
+                    "current_ip": device.ip,
+                    "current_mac": device.mac_address,
+                    "stored_ip": stored_ip,
+                    "stored_mac": stored_mac,
+                    "baseline_first_seen": record.get("first_seen", ""),
+                    "baseline_last_seen": record.get("last_seen", ""),
                 },
             )
         ]
