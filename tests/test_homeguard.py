@@ -167,6 +167,84 @@ class DetectionEngineTests(unittest.TestCase):
         self.assertEqual(finding.category, "possible_malware")
         self.assertEqual(finding.severity, "high")
 
+    def test_mirai_telnet_alternate_is_possible_malware(self):
+        # Port 2323 is the Mirai-style Telnet alternate. Without this rule
+        # botnet-recruitable IoT exposure passes silently; with it the
+        # cluster + per-port detectors both fire.
+        device = Device(ip="192.168.1.94", hostname="iot", open_ports=[2323])
+        report = HomeGuardEngine().build_report([device])
+        rule_ids = {f.rule_id for f in report.findings}
+        self.assertIn("possible_malware_service", rule_ids)
+        self.assertIn("risky_port_2323", rule_ids)
+
+    def test_tr069_router_management_port_is_high(self):
+        # Port 7547 (TR-069/CWMP) is the router-management vector that
+        # recruited millions of home routers into the Mirai/TheMoon botnets.
+        device = Device(ip="192.168.1.95", hostname="router", open_ports=[7547])
+        report = HomeGuardEngine().build_report([device])
+        finding = next(f for f in report.findings if f.rule_id == "risky_port_7547")
+        self.assertEqual(finding.severity, "high")
+
+    def test_raw_printer_port_is_flagged(self):
+        device = Device(ip="192.168.1.96", hostname="printer", open_ports=[9100])
+        report = HomeGuardEngine().build_report([device])
+        rule_ids = {f.rule_id for f in report.findings}
+        self.assertIn("risky_port_9100", rule_ids)
+
+    def test_active_scan_port_set_covers_every_risky_definition(self):
+        # The active TCP probe set must include every port the detection
+        # engine has a rule for. If this drifts, exposed services stop
+        # surfacing in reports.
+        from greynoc_homeguard.definitions import (
+            DEFAULT_RISKY_PORTS,
+            active_scan_ports,
+        )
+
+        ports = set(active_scan_ports({"risky_ports": DEFAULT_RISKY_PORTS}))
+        for row in DEFAULT_RISKY_PORTS:
+            self.assertIn(row["port"], ports)
+        # Discovery defaults are still included so unfamiliar devices show up.
+        self.assertTrue({53, 80, 443} <= ports)
+
+    def test_outdated_starter_definitions_are_migrated_on_load(self):
+        # Older HomeGuard installs persisted an early `risky_ports` list
+        # and never received new rules from `update-definitions` (which
+        # only refreshes KEV/CVE feeds). The load() migration path must
+        # bring stale bundles up to the current STARTER_VERSION.
+        from greynoc_homeguard.definitions import (
+            DefinitionManager,
+            STARTER_VERSION,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = Path(tmp) / "security_definitions.json"
+            stale.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "definitions_version": "stale",
+                        "feed_versions": {"starter": "2025.01.01.0"},
+                        "risky_ports": [
+                            {"port": 23, "service": "Telnet", "severity": "high"}
+                        ],
+                        "device_name_hints": ["router"],
+                        "product_hints": [],
+                        "kev_catalog": [{"cve_id": "CVE-9999-0001"}],
+                        "recent_cves": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            data = DefinitionManager(path=stale).load()
+            # New ports landed.
+            ports = {row["port"] for row in data["risky_ports"]}
+            self.assertIn(2323, ports)
+            self.assertIn(7547, ports)
+            self.assertIn(9100, ports)
+            self.assertEqual(data["feed_versions"]["starter"], STARTER_VERSION)
+            # KEV/CVE caches the user already downloaded are preserved.
+            self.assertEqual(len(data["kev_catalog"]), 1)
+
 
 class EndpointMalwareScannerTests(unittest.TestCase):
     def test_process_scanner_flags_encoded_download_cradle(self):
