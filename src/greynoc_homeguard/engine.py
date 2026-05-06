@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from .baseline import BaselineStore
 from . import __version__
+from .custom_rules import apply_to_definitions, has_any_rules, load_custom_rules
 from .definitions import DefinitionManager
 from .detection import HomeGuardDetectionEngine
 from .models import Device, Finding, HomeGuardReport, utcnow
@@ -20,7 +21,8 @@ class HomeGuardEngine:
     detection_engine: HomeGuardDetectionEngine = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.definitions is None:
+        loaded_from_disk = self.definitions is None
+        if loaded_from_disk:
             manager = DefinitionManager()
             self.definitions = manager.load()
             self.definition_status = manager.status()
@@ -32,6 +34,22 @@ class HomeGuardEngine:
                 "recent_cve_count": len(self.definitions.get("recent_cves") or []),
                 "update_status": str(self.definitions.get("update_status") or "current"),
             }
+        # Merge user custom rules (if any) only when the engine is operating
+        # against the live on-disk definition store. Tests that construct
+        # the engine with an explicit ``definitions=`` argument get a
+        # fully reproducible rule set without leakage from the developer's
+        # own custom_rules.json.
+        if loaded_from_disk:
+            custom = load_custom_rules()
+            if has_any_rules(custom):
+                apply_to_definitions(self.definitions or {}, custom)
+                self.definition_status = dict(self.definition_status)
+                self.definition_status["custom_rules_active"] = True
+                self.definition_status["custom_rules_summary"] = {
+                    "risky_ports": len(custom.get("risky_ports") or []),
+                    "watch_hostnames": len(custom.get("watch_hostnames") or []),
+                    "watch_mac_prefixes": len(custom.get("watch_mac_prefixes") or []),
+                }
         self.detection_engine = HomeGuardDetectionEngine(self.definitions or {})
 
     def evaluate_device(self, device: Device, baseline: BaselineStore | None = None) -> list[Finding]:

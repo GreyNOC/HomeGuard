@@ -13,13 +13,23 @@ from .baseline import (
     TRUST_VALUES,
     TRUST_UNKNOWN,
 )
+from .custom_rules import (
+    has_any_rules,
+    load_custom_rules,
+    write_example,
+)
 from .dashboard import serve_report
 from .definitions import DefinitionManager
 from .engine import HomeGuardEngine
 from .history import ProtectionHistory
 from .logging_setup import setup_logging
 from .models import Device
-from .paths import default_baseline_path, default_output_dir, ensure_app_dirs
+from .paths import (
+    custom_rules_file,
+    default_baseline_path,
+    default_output_dir,
+    ensure_app_dirs,
+)
 from .reports import export_report
 from .scan_runner import run_full_scan
 from .scheduler import INTERVAL_VALUES, ScheduleManager
@@ -100,6 +110,47 @@ def cmd_update_definitions(args: argparse.Namespace) -> int:
         if isinstance(details, dict):
             state = "ok" if details.get("ok") else "problem"
             print(f"  {source}: {state} - {details.get('message')}")
+    return 0
+
+
+def cmd_import_definitions(args: argparse.Namespace) -> int:
+    result = DefinitionManager().import_from_file(args.input)
+    if not result.get("ok"):
+        print(f"error: {result.get('message') or 'Import failed'}", file=sys.stderr)
+        return 2
+    print(f"Imported HomeGuard security definitions from {args.input}")
+    print(f"  KEV records   : {result.get('kev_count', 0)}")
+    print(f"  CVE records   : {result.get('cve_count', 0)}")
+    print(f"  version       : {result.get('definitions_version')}")
+    return 0
+
+
+def cmd_custom_rules_show(_args: argparse.Namespace) -> int:
+    path = custom_rules_file()
+    custom = load_custom_rules(path)
+    print("HomeGuard custom rules:")
+    print(f"  path                : {path}")
+    if not path.exists():
+        print("  status              : no file (custom rules disabled)")
+        print("  hint                : run `homeguard custom-rules init` to seed an example")
+        return 0
+    if not has_any_rules(custom):
+        print("  status              : file exists but has zero valid rules")
+        return 0
+    print(f"  risky_ports         : {len(custom['risky_ports'])}")
+    print(f"  watch_hostnames     : {len(custom['watch_hostnames'])}")
+    print(f"  watch_mac_prefixes  : {len(custom['watch_mac_prefixes'])}")
+    return 0
+
+
+def cmd_custom_rules_init(args: argparse.Namespace) -> int:
+    try:
+        target = write_example(force=bool(args.force))
+    except FileExistsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"Wrote starter custom rules to {target}")
+    print("Edit the file in any text editor, then run a scan to apply your rules.")
     return 0
 
 
@@ -289,8 +340,26 @@ def build_parser() -> argparse.ArgumentParser:
     update_defs.add_argument("--nvd-days", type=int, default=30, help="Number of recent NVD publication days to cache, max 120")
     update_defs.set_defaults(func=cmd_update_definitions)
 
+    import_defs = sub.add_parser(
+        "import-definitions",
+        help="Import a HomeGuard security_definitions.json from another machine (offline / air-gapped)",
+    )
+    import_defs.add_argument("--input", required=True, help="Path to a HomeGuard security_definitions.json file")
+    import_defs.set_defaults(func=cmd_import_definitions)
+
     defs_status = sub.add_parser("definitions-status", help="Show local security definition status")
     defs_status.set_defaults(func=cmd_definitions_status)
+
+    custom = sub.add_parser(
+        "custom-rules",
+        help="Manage user-defined detection rules (custom_rules.json)",
+    )
+    custom_sub = custom.add_subparsers(dest="custom_command", required=True)
+    custom_show = custom_sub.add_parser("show", help="Show current custom rules path and counts")
+    custom_show.set_defaults(func=cmd_custom_rules_show)
+    custom_init = custom_sub.add_parser("init", help="Write an example custom_rules.json into your app data folder")
+    custom_init.add_argument("--force", action="store_true", help="Overwrite an existing file")
+    custom_init.set_defaults(func=cmd_custom_rules_init)
 
     dash = sub.add_parser("dashboard", help="Serve a local dashboard for a report JSON")
     dash.add_argument("--report", required=True, help="Path to report.json")

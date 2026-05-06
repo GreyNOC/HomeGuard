@@ -136,5 +136,12 @@ def settings_file() -> Path:
     return user_data_dir() / "settings.json"
 
 
+def custom_rules_file() -> Path:
+    """User-editable JSON file with custom detection rules. Optional; if
+    missing, no custom rules are applied."""
+
+    return user_data_dir() / "custom_rules.json"
+
+
 def logs_dir() -> Path:
     return user_data_dir() / "logs"

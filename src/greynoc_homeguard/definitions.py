@@ -304,6 +304,112 @@ class DefinitionManager:
             "notice": data.get("notice") or "",
         }
 
+    def import_from_file(self, path: str | Path) -> dict[str, Any]:
+        """Import a HomeGuard definitions JSON exported from another machine.
+
+        Designed for offline / air-gapped use: a connected device runs
+        ``update-definitions``, copies ``security_definitions.json`` to
+        a USB stick, and the offline device runs
+        ``homeguard import-definitions --input <file>`` to absorb the
+        KEV/CVE intelligence without ever reaching CISA or NVD itself.
+
+        Imports the recognized cache fields (``kev_catalog``,
+        ``recent_cves``) verbatim. Built-in static fields (risky_ports,
+        device_name_hints, product_hints) are NOT touched here so the
+        bundled-version migration in ``load()`` remains the single
+        source of truth for those, and so two override paths
+        (``import-definitions`` and ``custom_rules.json``) don't fight
+        each other. Returns a status dict; the file is left untouched
+        if any validation step fails.
+        """
+
+        target = Path(path)
+        if not target.exists():
+            return {"ok": False, "message": f"File not found: {path}"}
+        try:
+            raw = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"ok": False, "message": f"Could not read JSON: {exc}"}
+        if not isinstance(raw, dict):
+            return {"ok": False, "message": "Top-level JSON value must be an object."}
+        known_keys = {"kev_catalog", "recent_cves", "definitions_version", "feed_versions"}
+        if not (set(raw.keys()) & known_keys):
+            return {
+                "ok": False,
+                "message": (
+                    "File does not contain any HomeGuard definition fields. "
+                    "Expected at least one of: " + ", ".join(sorted(known_keys))
+                ),
+            }
+
+        data = self.load()
+
+        kev_in = raw.get("kev_catalog")
+        kev_imported = 0
+        if isinstance(kev_in, list):
+            compact: list[dict[str, Any]] = []
+            for item in kev_in:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("cve_id"):
+                    compact.append(item)
+                elif item.get("cveID"):
+                    compact.append(_compact_kev_item(item))
+            data["kev_catalog"] = compact
+            kev_imported = len(compact)
+
+        cve_in = raw.get("recent_cves")
+        cve_imported = 0
+        if isinstance(cve_in, list):
+            cves = [
+                item for item in cve_in if isinstance(item, dict) and item.get("cve_id")
+            ]
+            data["recent_cves"] = cves
+            cve_imported = len(cves)
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        data["definitions_version"] = str(
+            raw.get("definitions_version") or now.strftime("%Y.%m.%d.%H%M")
+        )
+        data["last_updated"] = utcnow()
+        data["updated_at"] = data["last_updated"]
+        data["update_status"] = UPDATE_STATUS_CURRENT
+        data["record_count"] = (
+            len(data.get("kev_catalog") or []) + len(data.get("recent_cves") or [])
+        )
+        statuses = dict(data.get("source_status") or {})
+        statuses["imported"] = {
+            "ok": True,
+            "message": (
+                f"Imported {kev_imported} KEV record(s) and {cve_imported} CVE record(s) "
+                f"from {target.name}."
+            ),
+            "updated_at": data["last_updated"],
+            "source": str(target),
+        }
+        data["source_status"] = statuses
+        data["sources"] = sorted(
+            set(list(data.get("sources") or []) + ["starter", "imported"])
+        )
+        feed_versions = dict(data.get("feed_versions") or {})
+        if isinstance(raw.get("feed_versions"), dict):
+            for feed_name in ("cisa_kev", "nvd_recent_cves"):
+                if raw["feed_versions"].get(feed_name):
+                    feed_versions[feed_name] = str(raw["feed_versions"][feed_name])
+        data["feed_versions"] = feed_versions
+        feed_timestamps = dict(data.get("feed_timestamps") or {})
+        feed_timestamps["imported"] = data["last_updated"]
+        data["feed_timestamps"] = feed_timestamps
+        self.save(data)
+        return {
+            "ok": True,
+            "message": "Definitions imported.",
+            "kev_count": kev_imported,
+            "cve_count": cve_imported,
+            "definitions_version": str(data["definitions_version"]),
+            "source": str(target),
+        }
+
     def update_from_sources(self, *, nvd_days: int = 30) -> dict[str, Any]:
         data = self.load()
         statuses = dict(data.get("source_status") or {})

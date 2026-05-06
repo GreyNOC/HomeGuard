@@ -889,6 +889,224 @@ class ScanDiffTests(unittest.TestCase):
             )
 
 
+class CustomRulesTests(unittest.TestCase):
+    def test_load_returns_empty_payload_when_missing(self):
+        from greynoc_homeguard.custom_rules import has_any_rules, load_custom_rules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing.json"
+            payload = load_custom_rules(path)
+            self.assertFalse(has_any_rules(payload))
+
+    def test_invalid_json_does_not_crash(self):
+        from greynoc_homeguard.custom_rules import has_any_rules, load_custom_rules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.json"
+            path.write_text("{ not valid json", encoding="utf-8")
+            payload = load_custom_rules(path)
+            self.assertFalse(has_any_rules(payload))
+
+    def test_invalid_individual_entries_are_dropped(self):
+        from greynoc_homeguard.custom_rules import load_custom_rules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rules.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "risky_ports": [
+                            {"port": 22, "severity": "low"},
+                            {"port": 0, "severity": "low"},  # invalid port
+                            {"port": "abc"},  # invalid type
+                            "string-not-dict",  # invalid row
+                        ],
+                        "watch_hostnames": [
+                            {"pattern": "*-lab", "severity": "high"},
+                            {"pattern": "", "severity": "high"},  # empty pattern
+                        ],
+                        "watch_mac_prefixes": [
+                            {"prefix": "aa:bb:cc"},  # ok
+                            {"prefix": "shorty"},  # not enough hex chars
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = load_custom_rules(path)
+            self.assertEqual(len(payload["risky_ports"]), 1)
+            self.assertEqual(payload["risky_ports"][0]["port"], 22)
+            self.assertEqual(len(payload["watch_hostnames"]), 1)
+            self.assertEqual(payload["watch_hostnames"][0]["pattern"], "*-lab")
+            self.assertEqual(len(payload["watch_mac_prefixes"]), 1)
+            self.assertEqual(payload["watch_mac_prefixes"][0]["prefix"], "aa:bb:cc")
+
+    def test_apply_to_definitions_extends_risky_ports(self):
+        from greynoc_homeguard.custom_rules import apply_to_definitions
+
+        definitions = {"risky_ports": [{"port": 80, "severity": "info"}]}
+        custom = {
+            "risky_ports": [{"port": 12345, "severity": "high", "service": "x", "why": "y"}],
+            "watch_hostnames": [],
+            "watch_mac_prefixes": [],
+        }
+        apply_to_definitions(definitions, custom)
+        ports = {row["port"] for row in definitions["risky_ports"]}
+        self.assertIn(80, ports)
+        self.assertIn(12345, ports)
+
+    def test_custom_hostname_pattern_emits_finding(self):
+        from greynoc_homeguard.custom_rules import apply_to_definitions
+        from greynoc_homeguard.detection import HomeGuardDetectionEngine
+
+        # Hand-roll a definitions dict so the engine isn't loading anything
+        # from disk and the test isn't tied to the developer's own
+        # custom_rules.json.
+        definitions: dict = {"risky_ports": [], "device_name_hints": [], "product_hints": []}
+        apply_to_definitions(
+            definitions,
+            {
+                "risky_ports": [],
+                "watch_hostnames": [
+                    {
+                        "pattern": "*-lab",
+                        "severity": "high",
+                        "why": "Lab hostnames should not appear at home.",
+                    }
+                ],
+                "watch_mac_prefixes": [],
+            },
+        )
+        engine = HomeGuardDetectionEngine(definitions)
+        device = Device(
+            ip="192.168.1.42", hostname="alice-lab", mac_address="aa:bb:cc:00:01:02"
+        )
+        findings = engine.evaluate([device])
+        custom_hits = [f for f in findings if f.category == "user_custom_rule"]
+        self.assertTrue(custom_hits, "expected a custom hostname-match finding")
+        self.assertEqual(custom_hits[0].severity, "high")
+        self.assertEqual(custom_hits[0].evidence.get("matched_pattern"), "*-lab")
+
+    def test_custom_mac_prefix_emits_finding_and_normalizes_input(self):
+        # Round-trip the prefix through load_custom_rules() -> apply_to_definitions
+        # -> detection so we exercise the same path the runtime uses. The
+        # validator turns "aabb-cc" into "aa:bb:cc" before the detector
+        # ever sees it, so a device with MAC AA:BB:CC:* must match while
+        # an unrelated MAC must not.
+        from greynoc_homeguard.custom_rules import (
+            apply_to_definitions,
+            load_custom_rules,
+        )
+        from greynoc_homeguard.detection import HomeGuardDetectionEngine
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "custom_rules.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "watch_mac_prefixes": [
+                            {
+                                "prefix": "aabb-cc",
+                                "severity": "medium",
+                                "why": "Recalled vendor.",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            custom = load_custom_rules(rules_path)
+        self.assertEqual(custom["watch_mac_prefixes"][0]["prefix"], "aa:bb:cc")
+        definitions: dict = {"risky_ports": [], "device_name_hints": [], "product_hints": []}
+        apply_to_definitions(definitions, custom)
+        engine = HomeGuardDetectionEngine(definitions)
+        match = Device(ip="192.168.1.50", mac_address="AA:BB:CC:11:22:33")
+        miss = Device(ip="192.168.1.51", mac_address="11:22:33:44:55:66")
+        findings = engine.evaluate([match, miss])
+        custom_hits = [f for f in findings if f.category == "user_custom_rule"]
+        self.assertEqual(len(custom_hits), 1)
+        self.assertEqual(custom_hits[0].device_ip, "192.168.1.50")
+
+    def test_engine_loaded_with_explicit_definitions_does_not_apply_disk_custom_rules(self):
+        # Tests pass explicit ``definitions=`` arguments to HomeGuardEngine.
+        # Those callers must not silently inherit whatever rules happen to
+        # live in the developer's local custom_rules.json or the test
+        # results would depend on the developer's environment.
+        report = HomeGuardEngine(definitions={"risky_ports": []}).build_report(
+            [Device(ip="192.168.1.10", hostname="alice-lab")]
+        )
+        self.assertFalse(
+            any(f.category == "user_custom_rule" for f in report.findings)
+        )
+
+
+class ImportDefinitionsTests(_AppDataMixin, unittest.TestCase):
+    def test_missing_file_returns_error_status(self):
+        self._isolate()
+        result = DefinitionManager().import_from_file(
+            Path(tempfile.gettempdir()) / "definitely-not-here.json"
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("not found", result["message"].lower())
+
+    def test_invalid_json_returns_error_status(self):
+        self._isolate()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.json"
+            path.write_text("not json", encoding="utf-8")
+            result = DefinitionManager().import_from_file(path)
+        self.assertFalse(result["ok"])
+
+    def test_unrelated_json_object_is_refused(self):
+        self._isolate()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "unrelated.json"
+            path.write_text(json.dumps({"hello": "world"}), encoding="utf-8")
+            result = DefinitionManager().import_from_file(path)
+        self.assertFalse(result["ok"])
+
+    def test_kev_and_cve_are_imported_and_status_is_current(self):
+        self._isolate()
+        manager = DefinitionManager()
+        with tempfile.TemporaryDirectory() as tmp:
+            export_path = Path(tmp) / "security_definitions.json"
+            export_path.write_text(
+                json.dumps(
+                    {
+                        "kev_catalog": [
+                            {
+                                "cveID": "CVE-2099-9999",
+                                "vendorProject": "Example",
+                                "product": "Widget",
+                                "vulnerabilityName": "Test",
+                                "dateAdded": "2099-01-01",
+                                "shortDescription": "Test entry.",
+                            }
+                        ],
+                        "recent_cves": [
+                            {"cve_id": "CVE-2099-0001", "description": "From offline import."}
+                        ],
+                        "definitions_version": "offline.import.1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = manager.import_from_file(export_path)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["kev_count"], 1)
+        self.assertEqual(result["cve_count"], 1)
+        status = manager.status()
+        self.assertEqual(status["update_status"], UPDATE_STATUS_CURRENT)
+        self.assertEqual(status["kev_count"], 1)
+        self.assertEqual(status["recent_cve_count"], 1)
+        # The bundled migration must NOT have wiped the imported version
+        # because feed_versions.starter is updated to STARTER_VERSION on
+        # first load. Re-loading the saved file should show the imported
+        # KEV catalog still present.
+        reloaded = manager.load()
+        self.assertEqual(len(reloaded.get("kev_catalog") or []), 1)
+
+
 class CLITests(_AppDataMixin, unittest.TestCase):
     def test_definitions_status_command(self):
         self._isolate()

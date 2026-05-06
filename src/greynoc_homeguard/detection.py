@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -93,7 +94,7 @@ class HomeGuardDetectionEngine:
     """
 
     engine_name = "HomeGuard Detection Engine"
-    engine_version = "0.5.1"
+    engine_version = "0.6.0"
 
     def __init__(self, definitions: dict[str, Any] | None = None) -> None:
         self.definitions = definitions or {}
@@ -137,6 +138,8 @@ class HomeGuardDetectionEngine:
             "remote_admin_cluster": self._detect_remote_admin_cluster,
             "possible_malware_service": self._detect_possible_malware_service,
             "hostname_collision": self._detect_hostname_collision,
+            "custom_hostname_match": self._detect_custom_hostname_match,
+            "custom_mac_prefix_match": self._detect_custom_mac_prefix_match,
         }
         for rule in self.rules:
             if not rule.enabled:
@@ -258,6 +261,56 @@ class HomeGuardDetectionEngine:
                     category=category,
                     confidence=0.78 if severity in {"critical", "high", "medium"} else 0.63,
                     metadata={"port": port, "service": service, "why": why},
+                )
+            )
+        # User-defined hostname watch list. Each entry becomes its own rule
+        # so the existing telemetry, severity scoring, and dedupe paths all
+        # work without special-casing.
+        for index, entry in enumerate(definitions.get("custom_watch_hostnames") or []):
+            if not isinstance(entry, dict):
+                continue
+            pattern = str(entry.get("pattern") or "").strip().lower()
+            if not pattern:
+                continue
+            digest = hashlib.sha256(pattern.encode("utf-8")).hexdigest()[:8]
+            severity = str(entry.get("severity") or "medium")
+            rules.append(
+                DetectionRule(
+                    rule_id=f"custom_hostname_{digest}",
+                    rule_type="custom_hostname_match",
+                    title="User-defined hostname watch list match",
+                    severity=severity,
+                    category="user_custom_rule",
+                    confidence=0.6,
+                    metadata={
+                        "pattern": pattern,
+                        "why": str(entry.get("why") or ""),
+                        "index": index,
+                    },
+                )
+            )
+        # User-defined MAC OUI watch list.
+        for index, entry in enumerate(definitions.get("custom_watch_mac_prefixes") or []):
+            if not isinstance(entry, dict):
+                continue
+            prefix = str(entry.get("prefix") or "").strip().lower()
+            if not prefix:
+                continue
+            digest = hashlib.sha256(prefix.encode("utf-8")).hexdigest()[:8]
+            severity = str(entry.get("severity") or "medium")
+            rules.append(
+                DetectionRule(
+                    rule_id=f"custom_mac_{digest}",
+                    rule_type="custom_mac_prefix_match",
+                    title="User-defined MAC OUI watch list match",
+                    severity=severity,
+                    category="user_custom_rule",
+                    confidence=0.65,
+                    metadata={
+                        "prefix": prefix,
+                        "why": str(entry.get("why") or ""),
+                        "index": index,
+                    },
                 )
             )
         return rules
@@ -675,6 +728,83 @@ class HomeGuardDetectionEngine:
                 )
             )
         return findings
+
+    def _detect_custom_hostname_match(
+        self, rule: DetectionRule, device: Device, _baseline: BaselineStore | None
+    ) -> list[Finding]:
+        pattern = str(rule.metadata.get("pattern") or "").strip().lower()
+        hostname = (device.hostname or "").strip().lower()
+        if not pattern or not hostname:
+            return []
+        if not fnmatch.fnmatchcase(hostname, pattern):
+            return []
+        why = str(rule.metadata.get("why") or "Hostname matched a custom watch list entry.")
+        name = device.hostname or device.vendor or device.ip
+        return [
+            self._mk(
+                rule_id=rule.rule_id,
+                title=f"Custom hostname watch list match: {name}",
+                severity=rule.severity,
+                confidence=rule.confidence,
+                category=rule.category,
+                device=device,
+                plain_english=(
+                    f"{name} matched the hostname pattern {pattern!r} from your local custom rules. {why}"
+                ),
+                recommended_actions=[
+                    "Confirm this device is supposed to be on your network.",
+                    "If it is unexpected, remove it from WiFi or change the WiFi password.",
+                    "Edit your custom_rules.json file to refine or remove this rule if it no longer applies.",
+                ],
+                evidence={
+                    "matched_pattern": pattern,
+                    "hostname": device.hostname,
+                    "ip": device.ip,
+                    "rule_source": "custom_rules.json",
+                },
+            )
+        ]
+
+    def _detect_custom_mac_prefix_match(
+        self, rule: DetectionRule, device: Device, _baseline: BaselineStore | None
+    ) -> list[Finding]:
+        prefix = str(rule.metadata.get("prefix") or "").strip().lower()
+        mac = (device.mac_address or "").strip().lower()
+        if not prefix or not mac:
+            return []
+        cleaned = "".join(char for char in mac if char in "0123456789abcdef")
+        if len(cleaned) < 6:
+            return []
+        normalized = ":".join(cleaned[i : i + 2] for i in range(0, 6, 2))
+        if not normalized.startswith(prefix):
+            return []
+        why = str(rule.metadata.get("why") or "MAC OUI matched a custom watch list entry.")
+        name = device.hostname or device.vendor or device.ip
+        return [
+            self._mk(
+                rule_id=rule.rule_id,
+                title=f"Custom MAC OUI watch list match: {name}",
+                severity=rule.severity,
+                confidence=rule.confidence,
+                category=rule.category,
+                device=device,
+                plain_english=(
+                    f"{name} ({device.ip}) has a MAC starting with {prefix} which matches a vendor "
+                    f"prefix you flagged in custom rules. {why}"
+                ),
+                recommended_actions=[
+                    "Confirm whether this device is expected.",
+                    "Check vendor advisories for known issues with this hardware.",
+                    "Edit your custom_rules.json file to refine or remove this rule if it no longer applies.",
+                ],
+                evidence={
+                    "matched_prefix": prefix,
+                    "mac_oui": normalized,
+                    "ip": device.ip,
+                    "rule_source": "custom_rules.json",
+                },
+            )
+        ]
 
     def _detect_kev_hints(self, rule: DetectionRule, device: Device, _baseline: BaselineStore | None) -> list[Finding]:
         findings: list[Finding] = []
