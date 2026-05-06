@@ -1,12 +1,38 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 from .models import Device, Finding, HomeGuardReport
 from .reports import render_html
+
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Best-effort loopback check for the dashboard bind address.
+
+    The dashboard serves the report HTML, the parsed report JSON, and any
+    sibling PDF/CSV files in the report directory. Binding it to anything
+    other than the loopback interface exposes the user's full report —
+    which can include device hostnames, MAC fragments, and CVE matches —
+    to every other device on their LAN. We refuse non-loopback by default
+    so a typo (or copy-paste of an example) cannot accidentally publish
+    the report.
+    """
+
+    if not host:
+        return True
+    if host.lower() in LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _report_from_dict(data: dict[str, Any]) -> HomeGuardReport:
@@ -46,7 +72,27 @@ def _report_from_dict(data: dict[str, Any]) -> HomeGuardReport:
     )
 
 
-def serve_report(report_path: str | Path, host: str = "127.0.0.1", port: int = 8765) -> None:
+def serve_report(
+    report_path: str | Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    *,
+    allow_lan: bool = False,
+) -> None:
+    if not _is_loopback_host(host):
+        if not allow_lan:
+            raise ValueError(
+                f"Refusing to bind the HomeGuard dashboard to {host!r} because it is "
+                "not a loopback address. Anyone on your network would be able to "
+                "read the report. Pass --allow-lan if you really intend to expose "
+                "it, or use 127.0.0.1 (the default)."
+            )
+        print(
+            f"WARNING: HomeGuard dashboard is binding to {host} — anyone on your "
+            "local network can read the report. Stop the server (Ctrl+C) when done.",
+            file=sys.stderr,
+            flush=True,
+        )
     path = Path(report_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     report = _report_from_dict(data)

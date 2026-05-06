@@ -296,6 +296,92 @@ def render_html(report: HomeGuardReport) -> str:
             "</section>"
         )
 
+    delta = _scan_metadata(report, "delta", {}) or {}
+    delta_section = ""
+    if isinstance(delta, dict) and delta.get("available"):
+        delta_devices = delta.get("devices") or {}
+        delta_findings = delta.get("findings") or {}
+        delta_risk = delta.get("risk") or {}
+        added_devices = delta_devices.get("added") or []
+        removed_devices = delta_devices.get("removed") or []
+        new_port_devices = delta_devices.get("with_new_ports") or []
+        closed_port_devices = delta_devices.get("with_closed_ports") or []
+        added_findings = delta_findings.get("added") or []
+        resolved_findings = delta_findings.get("resolved") or []
+        direction = str(delta_risk.get("direction") or "unchanged")
+
+        def _list(items: list[str]) -> str:
+            return "<ul>" + "".join(f"<li>{html.escape(line)}</li>" for line in items) + "</ul>"
+
+        new_dev_lines = [
+            f"{item.get('name') or '-'} ({item.get('ip') or '-'})"
+            for item in added_devices
+        ]
+        removed_dev_lines = [
+            f"{item.get('name') or '-'} ({item.get('ip') or '-'})"
+            for item in removed_devices
+        ]
+        new_port_lines = [
+            f"{item.get('name') or '-'} ({item.get('ip') or '-'}): "
+            + ", ".join(str(port) for port in (item.get("newly_open") or []))
+            for item in new_port_devices
+        ]
+        closed_port_lines = [
+            f"{item.get('name') or '-'} ({item.get('ip') or '-'}): "
+            + ", ".join(str(port) for port in (item.get("newly_closed") or []))
+            for item in closed_port_devices
+        ]
+        added_finding_lines = [
+            f"[{str(item.get('severity') or 'info').upper()}] {item.get('title') or '-'} "
+            f"on {item.get('device_name') or '-'} ({item.get('device_ip') or '-'})"
+            for item in added_findings
+        ]
+        resolved_finding_lines = [
+            f"{item.get('title') or '-'} on {item.get('device_name') or '-'} "
+            f"({item.get('device_ip') or '-'})"
+            for item in resolved_findings
+        ]
+
+        risk_label = (
+            f"{html.escape(str(delta_risk.get('previous_risk') or '-'))} → "
+            f"{html.escape(str(delta_risk.get('current_risk') or '-'))} "
+            f"(score {delta_risk.get('previous_score', 0)} → {delta_risk.get('current_score', 0)})"
+        )
+        direction_class = (
+            "action" if direction == "worsened" else "ok" if direction == "improved" else "review"
+        )
+
+        any_change = bool(
+            added_devices or removed_devices or new_port_devices or closed_port_devices
+            or added_findings or resolved_findings or direction != "unchanged"
+        )
+        body_parts: list[str] = []
+        if not any_change:
+            body_parts.append("<p>No changes since the previous scan.</p>")
+        else:
+            if direction != "unchanged":
+                body_parts.append(
+                    f'<p class="meta">Risk {html.escape(direction)}: {risk_label}.</p>'
+                )
+            if added_devices:
+                body_parts.append("<h3>New devices</h3>" + _list(new_dev_lines))
+            if removed_devices:
+                body_parts.append("<h3>Devices not seen this scan</h3>" + _list(removed_dev_lines))
+            if new_port_devices:
+                body_parts.append("<h3>Newly open ports</h3>" + _list(new_port_lines))
+            if closed_port_devices:
+                body_parts.append("<h3>Newly closed ports</h3>" + _list(closed_port_lines))
+            if added_findings:
+                body_parts.append("<h3>New findings</h3>" + _list(added_finding_lines))
+            if resolved_findings:
+                body_parts.append("<h3>Resolved findings</h3>" + _list(resolved_finding_lines))
+        delta_section = (
+            f'<section class="panel status-{direction_class}">'
+            "<h2>What changed since the previous scan</h2>"
+            + "".join(body_parts)
+            + "</section>"
+        )
+
     kev_findings = [finding for finding in report.findings if finding.category == "known_exploited_vulnerability"]
     kev_section = ""
     if kev_findings:
@@ -430,6 +516,7 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
     <p class="meta">{html.escape(str(engine_status.get('engine', 'HomeGuard Detection Engine')))} | Rules loaded: {html.escape(str(engine_status.get('rules_loaded', 0)))}</p>
   </section>
 
+  {delta_section}
   {kev_section}
   {family_section}
   {quarantined_section}

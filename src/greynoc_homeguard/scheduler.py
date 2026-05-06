@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .paths import schedule_file
+from .paths import atomic_write_text, schedule_file
 
 INTERVAL_SECONDS = {
     "hourly": 60 * 60,
@@ -61,10 +61,8 @@ class ScheduleManager:
         return self.config
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self.config.as_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
+        atomic_write_text(
+            self.path, json.dumps(self.config.as_dict(), indent=2, sort_keys=True)
         )
 
     def set(self, *, enabled: bool | None = None, interval: str | None = None, background_monitor: bool | None = None) -> ScheduleConfig:

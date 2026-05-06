@@ -206,6 +206,71 @@ class DetectionEngineTests(unittest.TestCase):
         # Discovery defaults are still included so unfamiliar devices show up.
         self.assertTrue({53, 80, 443} <= ports)
 
+    def test_hostname_only_baseline_detects_spoofer_on_different_ip(self):
+        # Baseline a device that has a hostname but no MAC. Then a second
+        # device joins the network claiming the same hostname from a
+        # different IP. Without the hostname-collision detector, the
+        # spoofer would inherit trust silently because Device.fingerprint()
+        # falls back to host:<name> when MAC is missing.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            original = Device(ip="192.168.1.50", hostname="alice-laptop")
+            baseline.update([original])
+            baseline.save()
+
+            spoofer = Device(ip="192.168.1.99", hostname="alice-laptop")
+            baseline2 = BaselineStore(Path(tmp) / "baseline.json").load()
+            self.assertTrue(baseline2.known(spoofer))  # naive lookup matches
+            self.assertFalse(baseline2.identity_matches(spoofer))
+
+            findings = HomeGuardEngine().detection_engine.evaluate(
+                [spoofer], baseline2
+            )
+            collision = next(f for f in findings if f.rule_id == "hostname_collision")
+            self.assertEqual(collision.category, "possible_intrusion")
+            self.assertIn(collision.severity, {"high", "critical"})
+            self.assertEqual(collision.evidence["stored_ip"], "192.168.1.50")
+            self.assertEqual(collision.evidence["current_ip"], "192.168.1.99")
+
+    def test_hostname_collision_silent_when_ip_matches(self):
+        # The same hostname-only device coming back at the same IP is not
+        # a collision; the detector must not produce false positives for
+        # ordinary repeat scans of imported / MAC-less devices.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            device = Device(ip="192.168.1.50", hostname="alice-laptop")
+            baseline.update([device])
+            baseline.save()
+            again = BaselineStore(Path(tmp) / "baseline.json").load()
+            findings = HomeGuardEngine().detection_engine.evaluate([device], again)
+            self.assertNotIn(
+                "hostname_collision", {f.rule_id for f in findings}
+            )
+
+    def test_mac_based_baseline_is_not_flagged_as_collision_on_ip_change(self):
+        # MAC is the identity for MAC-based fingerprints; legitimate DHCP
+        # rotation must never trigger the collision detector.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = BaselineStore(Path(tmp) / "baseline.json").load()
+            device = Device(
+                ip="192.168.1.50",
+                mac_address="00:11:22:33:44:55",
+                hostname="alice-laptop",
+            )
+            baseline.update([device])
+            baseline.save()
+            rotated = Device(
+                ip="192.168.1.222",
+                mac_address="00:11:22:33:44:55",
+                hostname="alice-laptop",
+            )
+            again = BaselineStore(Path(tmp) / "baseline.json").load()
+            self.assertTrue(again.identity_matches(rotated))
+            findings = HomeGuardEngine().detection_engine.evaluate([rotated], again)
+            self.assertNotIn(
+                "hostname_collision", {f.rule_id for f in findings}
+            )
+
     def test_outdated_starter_definitions_are_migrated_on_load(self):
         # Older HomeGuard installs persisted an early `risky_ports` list
         # and never received new rules from `update-definitions` (which
@@ -624,6 +689,422 @@ class SettingsTests(unittest.TestCase):
             self.assertIn("hg_test", AppSettings(path).load().ignored_finding_ids())
             settings.unignore_finding("hg_test")
             self.assertNotIn("hg_test", AppSettings(path).load().ignored_finding_ids())
+
+
+class AtomicWriteTests(unittest.TestCase):
+    def test_atomic_write_replaces_existing_file(self):
+        from greynoc_homeguard.paths import atomic_write_text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "data.json"
+            atomic_write_text(target, '{"a": 1}')
+            self.assertEqual(target.read_text(encoding="utf-8"), '{"a": 1}')
+            atomic_write_text(target, '{"a": 2}')
+            self.assertEqual(target.read_text(encoding="utf-8"), '{"a": 2}')
+            # No leftover .tmp files in the directory.
+            leftovers = [
+                child for child in target.parent.iterdir() if child.name != target.name
+            ]
+            self.assertEqual(leftovers, [])
+
+    def test_atomic_write_does_not_truncate_on_failure(self):
+        from greynoc_homeguard.paths import atomic_write_text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "data.json"
+            target.write_text('{"existing": true}', encoding="utf-8")
+            from unittest.mock import patch
+
+            with patch("os.replace", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    atomic_write_text(target, '{"would corrupt": true}')
+            # Original file is intact, no half-written content.
+            self.assertEqual(
+                target.read_text(encoding="utf-8"), '{"existing": true}'
+            )
+            # The temp file has been cleaned up.
+            leftovers = [
+                child for child in target.parent.iterdir() if child.name != target.name
+            ]
+            self.assertEqual(leftovers, [])
+
+
+class DashboardHostGuardTests(unittest.TestCase):
+    def test_loopback_classification(self):
+        from greynoc_homeguard.dashboard import _is_loopback_host
+
+        self.assertTrue(_is_loopback_host("127.0.0.1"))
+        self.assertTrue(_is_loopback_host("localhost"))
+        self.assertTrue(_is_loopback_host("::1"))
+        self.assertFalse(_is_loopback_host("0.0.0.0"))
+        self.assertFalse(_is_loopback_host("192.168.1.50"))
+        self.assertFalse(_is_loopback_host("example.com"))
+
+    def test_serve_report_refuses_non_loopback_without_allow_lan(self):
+        from greynoc_homeguard.dashboard import serve_report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report(
+                [Device(ip="192.168.1.10", open_ports=[80])]
+            )
+            paths = export_report(report, tmp)
+            with self.assertRaises(ValueError) as ctx:
+                serve_report(paths["json"], host="0.0.0.0", port=8765)
+            self.assertIn("loopback", str(ctx.exception).lower())
+
+
+class NvdApiKeyTests(_AppDataMixin, unittest.TestCase):
+    def test_api_key_env_is_attached_to_nvd_request(self):
+        from greynoc_homeguard.definitions import DefinitionManager
+
+        self._isolate()
+        manager = DefinitionManager()
+        captured: list[dict[str, str]] = []
+
+        def fake_http_json(url, *, timeout=25.0, attempts=3, extra_headers=None):
+            captured.append(dict(extra_headers or {}))
+            if "cisa.gov" in url:
+                return {"vulnerabilities": [], "catalogVersion": "2026"}
+            return {"vulnerabilities": []}
+
+        env = {"HOMEGUARD_NVD_API_KEY": "abcd-1234"}
+        with mock.patch(
+            "greynoc_homeguard.definitions._http_json", side_effect=fake_http_json
+        ), mock.patch.dict(os.environ, env, clear=False):
+            manager.update_from_sources(nvd_days=1)
+
+        # Two requests: KEV (no api key needed) and NVD (api key attached).
+        nvd_call_headers = captured[1] if len(captured) >= 2 else {}
+        self.assertEqual(nvd_call_headers.get("apiKey"), "abcd-1234")
+
+
+class ScanDiffTests(unittest.TestCase):
+    def test_diff_against_no_previous_returns_unavailable(self):
+        from greynoc_homeguard.diff import compute_scan_diff
+
+        report = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.10", open_ports=[80])]
+        )
+        delta = compute_scan_diff(report, None)
+        self.assertFalse(delta["available"])
+
+    def test_diff_surfaces_new_devices_new_ports_and_resolved_findings(self):
+        from greynoc_homeguard.diff import compute_scan_diff, render_summary
+
+        # Previous scan: just the router on port 80.
+        previous_report = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.1", hostname="router", open_ports=[80])]
+        ).as_dict()
+
+        # Current scan: router gained Telnet (new port + new high-severity
+        # finding), a new device appeared, and the router's HTTP-on-80
+        # finding still exists (so should not be 'added').
+        current = HomeGuardEngine().build_report(
+            [
+                Device(ip="192.168.1.1", hostname="router", open_ports=[80, 23]),
+                Device(ip="192.168.1.99", hostname="laptop", open_ports=[]),
+            ]
+        )
+        delta = compute_scan_diff(current, previous_report)
+        self.assertTrue(delta["available"])
+
+        added_ips = {item["ip"] for item in delta["devices"]["added"]}
+        self.assertIn("192.168.1.99", added_ips)
+        self.assertEqual(len(delta["devices"]["removed"]), 0)
+        new_port_rows = delta["devices"]["with_new_ports"]
+        self.assertTrue(
+            any(
+                row["ip"] == "192.168.1.1" and 23 in row["newly_open"]
+                for row in new_port_rows
+            )
+        )
+        added_rule_ids = {item["rule_id"] for item in delta["findings"]["added"]}
+        self.assertIn("risky_port_23", added_rule_ids)
+        # Re-emitted findings are not flagged as new.
+        self.assertNotIn("risky_port_80", added_rule_ids)
+
+        summary = render_summary(delta)
+        self.assertIn("new device", summary)
+        self.assertIn("newly open port", summary)
+        self.assertIn("new finding", summary)
+
+    def test_diff_detects_resolved_findings_and_improved_risk(self):
+        from greynoc_homeguard.diff import compute_scan_diff
+
+        # Previous: telnet exposed on a device.
+        previous = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.10", hostname="cam", open_ports=[23])]
+        ).as_dict()
+        # Current: telnet closed.
+        current = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.10", hostname="cam", open_ports=[])]
+        )
+        delta = compute_scan_diff(current, previous)
+        resolved_rules = {item["rule_id"] for item in delta["findings"]["resolved"]}
+        self.assertIn("risky_port_23", resolved_rules)
+        self.assertEqual(delta["risk"]["direction"], "improved")
+
+    def test_run_full_scan_attaches_delta_metadata(self):
+        # Two consecutive scans through run_full_scan: the second scan
+        # must produce a delta attached to scan_metadata referencing
+        # the first scan's report id.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["HOMEGUARD_DATA_DIR"] = tmp
+            ensure_app_dirs()
+            with mock.patch(
+                "greynoc_homeguard.scan_runner.detect_local_interfaces",
+                return_value=[],
+            ):
+                with mock.patch(
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    return_value=[
+                        Device(ip="192.168.1.10", hostname="router", open_ports=[80])
+                    ],
+                ):
+                    out1 = Path(tmp) / "s1"
+                    first, _, _ = run_full_scan(
+                        output_dir=out1, update_known_devices=False
+                    )
+                with mock.patch(
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    return_value=[
+                        Device(
+                            ip="192.168.1.10",
+                            hostname="router",
+                            open_ports=[80, 23],
+                        )
+                    ],
+                ):
+                    out2 = Path(tmp) / "s2"
+                    second, _, _ = run_full_scan(
+                        output_dir=out2, update_known_devices=False
+                    )
+
+            delta = second.scan_metadata.get("delta") or {}
+            self.assertTrue(delta.get("available"))
+            self.assertEqual(delta.get("previous_report_id"), first.report_id)
+            new_port_rows = delta["devices"]["with_new_ports"]
+            self.assertTrue(
+                any(23 in row.get("newly_open", []) for row in new_port_rows)
+            )
+
+
+class CustomRulesTests(unittest.TestCase):
+    def test_load_returns_empty_payload_when_missing(self):
+        from greynoc_homeguard.custom_rules import has_any_rules, load_custom_rules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing.json"
+            payload = load_custom_rules(path)
+            self.assertFalse(has_any_rules(payload))
+
+    def test_invalid_json_does_not_crash(self):
+        from greynoc_homeguard.custom_rules import has_any_rules, load_custom_rules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.json"
+            path.write_text("{ not valid json", encoding="utf-8")
+            payload = load_custom_rules(path)
+            self.assertFalse(has_any_rules(payload))
+
+    def test_invalid_individual_entries_are_dropped(self):
+        from greynoc_homeguard.custom_rules import load_custom_rules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rules.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "risky_ports": [
+                            {"port": 22, "severity": "low"},
+                            {"port": 0, "severity": "low"},  # invalid port
+                            {"port": "abc"},  # invalid type
+                            "string-not-dict",  # invalid row
+                        ],
+                        "watch_hostnames": [
+                            {"pattern": "*-lab", "severity": "high"},
+                            {"pattern": "", "severity": "high"},  # empty pattern
+                        ],
+                        "watch_mac_prefixes": [
+                            {"prefix": "aa:bb:cc"},  # ok
+                            {"prefix": "shorty"},  # not enough hex chars
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = load_custom_rules(path)
+            self.assertEqual(len(payload["risky_ports"]), 1)
+            self.assertEqual(payload["risky_ports"][0]["port"], 22)
+            self.assertEqual(len(payload["watch_hostnames"]), 1)
+            self.assertEqual(payload["watch_hostnames"][0]["pattern"], "*-lab")
+            self.assertEqual(len(payload["watch_mac_prefixes"]), 1)
+            self.assertEqual(payload["watch_mac_prefixes"][0]["prefix"], "aa:bb:cc")
+
+    def test_apply_to_definitions_extends_risky_ports(self):
+        from greynoc_homeguard.custom_rules import apply_to_definitions
+
+        definitions = {"risky_ports": [{"port": 80, "severity": "info"}]}
+        custom = {
+            "risky_ports": [{"port": 12345, "severity": "high", "service": "x", "why": "y"}],
+            "watch_hostnames": [],
+            "watch_mac_prefixes": [],
+        }
+        apply_to_definitions(definitions, custom)
+        ports = {row["port"] for row in definitions["risky_ports"]}
+        self.assertIn(80, ports)
+        self.assertIn(12345, ports)
+
+    def test_custom_hostname_pattern_emits_finding(self):
+        from greynoc_homeguard.custom_rules import apply_to_definitions
+        from greynoc_homeguard.detection import HomeGuardDetectionEngine
+
+        # Hand-roll a definitions dict so the engine isn't loading anything
+        # from disk and the test isn't tied to the developer's own
+        # custom_rules.json.
+        definitions: dict = {"risky_ports": [], "device_name_hints": [], "product_hints": []}
+        apply_to_definitions(
+            definitions,
+            {
+                "risky_ports": [],
+                "watch_hostnames": [
+                    {
+                        "pattern": "*-lab",
+                        "severity": "high",
+                        "why": "Lab hostnames should not appear at home.",
+                    }
+                ],
+                "watch_mac_prefixes": [],
+            },
+        )
+        engine = HomeGuardDetectionEngine(definitions)
+        device = Device(
+            ip="192.168.1.42", hostname="alice-lab", mac_address="aa:bb:cc:00:01:02"
+        )
+        findings = engine.evaluate([device])
+        custom_hits = [f for f in findings if f.category == "user_custom_rule"]
+        self.assertTrue(custom_hits, "expected a custom hostname-match finding")
+        self.assertEqual(custom_hits[0].severity, "high")
+        self.assertEqual(custom_hits[0].evidence.get("matched_pattern"), "*-lab")
+
+    def test_custom_mac_prefix_emits_finding_and_normalizes_input(self):
+        # Round-trip the prefix through load_custom_rules() -> apply_to_definitions
+        # -> detection so we exercise the same path the runtime uses. The
+        # validator turns "aabb-cc" into "aa:bb:cc" before the detector
+        # ever sees it, so a device with MAC AA:BB:CC:* must match while
+        # an unrelated MAC must not.
+        from greynoc_homeguard.custom_rules import (
+            apply_to_definitions,
+            load_custom_rules,
+        )
+        from greynoc_homeguard.detection import HomeGuardDetectionEngine
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "custom_rules.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "watch_mac_prefixes": [
+                            {
+                                "prefix": "aabb-cc",
+                                "severity": "medium",
+                                "why": "Recalled vendor.",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            custom = load_custom_rules(rules_path)
+        self.assertEqual(custom["watch_mac_prefixes"][0]["prefix"], "aa:bb:cc")
+        definitions: dict = {"risky_ports": [], "device_name_hints": [], "product_hints": []}
+        apply_to_definitions(definitions, custom)
+        engine = HomeGuardDetectionEngine(definitions)
+        match = Device(ip="192.168.1.50", mac_address="AA:BB:CC:11:22:33")
+        miss = Device(ip="192.168.1.51", mac_address="11:22:33:44:55:66")
+        findings = engine.evaluate([match, miss])
+        custom_hits = [f for f in findings if f.category == "user_custom_rule"]
+        self.assertEqual(len(custom_hits), 1)
+        self.assertEqual(custom_hits[0].device_ip, "192.168.1.50")
+
+    def test_engine_loaded_with_explicit_definitions_does_not_apply_disk_custom_rules(self):
+        # Tests pass explicit ``definitions=`` arguments to HomeGuardEngine.
+        # Those callers must not silently inherit whatever rules happen to
+        # live in the developer's local custom_rules.json or the test
+        # results would depend on the developer's environment.
+        report = HomeGuardEngine(definitions={"risky_ports": []}).build_report(
+            [Device(ip="192.168.1.10", hostname="alice-lab")]
+        )
+        self.assertFalse(
+            any(f.category == "user_custom_rule" for f in report.findings)
+        )
+
+
+class ImportDefinitionsTests(_AppDataMixin, unittest.TestCase):
+    def test_missing_file_returns_error_status(self):
+        self._isolate()
+        result = DefinitionManager().import_from_file(
+            Path(tempfile.gettempdir()) / "definitely-not-here.json"
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("not found", result["message"].lower())
+
+    def test_invalid_json_returns_error_status(self):
+        self._isolate()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.json"
+            path.write_text("not json", encoding="utf-8")
+            result = DefinitionManager().import_from_file(path)
+        self.assertFalse(result["ok"])
+
+    def test_unrelated_json_object_is_refused(self):
+        self._isolate()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "unrelated.json"
+            path.write_text(json.dumps({"hello": "world"}), encoding="utf-8")
+            result = DefinitionManager().import_from_file(path)
+        self.assertFalse(result["ok"])
+
+    def test_kev_and_cve_are_imported_and_status_is_current(self):
+        self._isolate()
+        manager = DefinitionManager()
+        with tempfile.TemporaryDirectory() as tmp:
+            export_path = Path(tmp) / "security_definitions.json"
+            export_path.write_text(
+                json.dumps(
+                    {
+                        "kev_catalog": [
+                            {
+                                "cveID": "CVE-2099-9999",
+                                "vendorProject": "Example",
+                                "product": "Widget",
+                                "vulnerabilityName": "Test",
+                                "dateAdded": "2099-01-01",
+                                "shortDescription": "Test entry.",
+                            }
+                        ],
+                        "recent_cves": [
+                            {"cve_id": "CVE-2099-0001", "description": "From offline import."}
+                        ],
+                        "definitions_version": "offline.import.1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = manager.import_from_file(export_path)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["kev_count"], 1)
+        self.assertEqual(result["cve_count"], 1)
+        status = manager.status()
+        self.assertEqual(status["update_status"], UPDATE_STATUS_CURRENT)
+        self.assertEqual(status["kev_count"], 1)
+        self.assertEqual(status["recent_cve_count"], 1)
+        # The bundled migration must NOT have wiped the imported version
+        # because feed_versions.starter is updated to STARTER_VERSION on
+        # first load. Re-loading the saved file should show the imported
+        # KEV catalog still present.
+        reloaded = manager.load()
+        self.assertEqual(len(reloaded.get("kev_catalog") or []), 1)
 
 
 class CLITests(_AppDataMixin, unittest.TestCase):

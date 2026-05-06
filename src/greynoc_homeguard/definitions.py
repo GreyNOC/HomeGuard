@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import utcnow
-from .paths import definitions_file
+from .paths import atomic_write_text, definitions_file
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 NVD_CVE_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -122,15 +123,24 @@ def _default_definitions() -> dict[str, Any]:
     }
 
 
-def _http_json(url: str, *, timeout: float = 25.0, attempts: int = 3) -> dict[str, Any]:
+def _http_json(
+    url: str,
+    *,
+    timeout: float = 25.0,
+    attempts: int = 3,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     last_exc: Exception | None = None
+    headers = {
+        "User-Agent": "HomeGuard/0.5 security-definitions-updater",
+        "Accept": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     for attempt in range(1, max(1, attempts) + 1):
         request = urllib.request.Request(
             url,
-            headers={
-                "User-Agent": "HomeGuard/0.5 security-definitions-updater",
-                "Accept": "application/json",
-            },
+            headers=headers,
             method="GET",
         )
         try:
@@ -258,8 +268,7 @@ class DefinitionManager:
 
     def save(self, data: dict[str, Any]) -> None:
         assert self.path is not None
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        atomic_write_text(self.path, json.dumps(data, indent=2, sort_keys=True))
 
     def status(self) -> dict[str, Any]:
         data = self.load()
@@ -293,6 +302,112 @@ class DefinitionManager:
             "sources": list(data.get("sources") or ["starter", "cisa_kev", "nvd_recent_cves"]),
             "source_status": data.get("source_status") or {},
             "notice": data.get("notice") or "",
+        }
+
+    def import_from_file(self, path: str | Path) -> dict[str, Any]:
+        """Import a HomeGuard definitions JSON exported from another machine.
+
+        Designed for offline / air-gapped use: a connected device runs
+        ``update-definitions``, copies ``security_definitions.json`` to
+        a USB stick, and the offline device runs
+        ``homeguard import-definitions --input <file>`` to absorb the
+        KEV/CVE intelligence without ever reaching CISA or NVD itself.
+
+        Imports the recognized cache fields (``kev_catalog``,
+        ``recent_cves``) verbatim. Built-in static fields (risky_ports,
+        device_name_hints, product_hints) are NOT touched here so the
+        bundled-version migration in ``load()`` remains the single
+        source of truth for those, and so two override paths
+        (``import-definitions`` and ``custom_rules.json``) don't fight
+        each other. Returns a status dict; the file is left untouched
+        if any validation step fails.
+        """
+
+        target = Path(path)
+        if not target.exists():
+            return {"ok": False, "message": f"File not found: {path}"}
+        try:
+            raw = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"ok": False, "message": f"Could not read JSON: {exc}"}
+        if not isinstance(raw, dict):
+            return {"ok": False, "message": "Top-level JSON value must be an object."}
+        known_keys = {"kev_catalog", "recent_cves", "definitions_version", "feed_versions"}
+        if not (set(raw.keys()) & known_keys):
+            return {
+                "ok": False,
+                "message": (
+                    "File does not contain any HomeGuard definition fields. "
+                    "Expected at least one of: " + ", ".join(sorted(known_keys))
+                ),
+            }
+
+        data = self.load()
+
+        kev_in = raw.get("kev_catalog")
+        kev_imported = 0
+        if isinstance(kev_in, list):
+            compact: list[dict[str, Any]] = []
+            for item in kev_in:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("cve_id"):
+                    compact.append(item)
+                elif item.get("cveID"):
+                    compact.append(_compact_kev_item(item))
+            data["kev_catalog"] = compact
+            kev_imported = len(compact)
+
+        cve_in = raw.get("recent_cves")
+        cve_imported = 0
+        if isinstance(cve_in, list):
+            cves = [
+                item for item in cve_in if isinstance(item, dict) and item.get("cve_id")
+            ]
+            data["recent_cves"] = cves
+            cve_imported = len(cves)
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        data["definitions_version"] = str(
+            raw.get("definitions_version") or now.strftime("%Y.%m.%d.%H%M")
+        )
+        data["last_updated"] = utcnow()
+        data["updated_at"] = data["last_updated"]
+        data["update_status"] = UPDATE_STATUS_CURRENT
+        data["record_count"] = (
+            len(data.get("kev_catalog") or []) + len(data.get("recent_cves") or [])
+        )
+        statuses = dict(data.get("source_status") or {})
+        statuses["imported"] = {
+            "ok": True,
+            "message": (
+                f"Imported {kev_imported} KEV record(s) and {cve_imported} CVE record(s) "
+                f"from {target.name}."
+            ),
+            "updated_at": data["last_updated"],
+            "source": str(target),
+        }
+        data["source_status"] = statuses
+        data["sources"] = sorted(
+            set(list(data.get("sources") or []) + ["starter", "imported"])
+        )
+        feed_versions = dict(data.get("feed_versions") or {})
+        if isinstance(raw.get("feed_versions"), dict):
+            for feed_name in ("cisa_kev", "nvd_recent_cves"):
+                if raw["feed_versions"].get(feed_name):
+                    feed_versions[feed_name] = str(raw["feed_versions"][feed_name])
+        data["feed_versions"] = feed_versions
+        feed_timestamps = dict(data.get("feed_timestamps") or {})
+        feed_timestamps["imported"] = data["last_updated"]
+        data["feed_timestamps"] = feed_timestamps
+        self.save(data)
+        return {
+            "ok": True,
+            "message": "Definitions imported.",
+            "kev_count": kev_imported,
+            "cve_count": cve_imported,
+            "definitions_version": str(data["definitions_version"]),
+            "source": str(target),
         }
 
     def update_from_sources(self, *, nvd_days: int = 30) -> dict[str, Any]:
@@ -334,7 +449,17 @@ class DefinitionManager:
                 }
             )
             url = f"{NVD_CVE_API_URL}?{query}&noRejected"
-            nvd = _http_json(url)
+            # NVD throttles unauthenticated traffic to ~5 requests per 30s
+            # without an API key. Users on slower networks or running
+            # update-definitions repeatedly hit those limits and get
+            # update_failed. An API key (free, request via NVD self-service)
+            # raises the limit to ~50/30s. Read it from the environment so
+            # the secret never lands in any of HomeGuard's persisted files.
+            nvd_headers: dict[str, str] = {}
+            api_key = os.environ.get("HOMEGUARD_NVD_API_KEY", "").strip()
+            if api_key:
+                nvd_headers["apiKey"] = api_key
+            nvd = _http_json(url, extra_headers=nvd_headers or None)
             vulns = nvd.get("vulnerabilities") if isinstance(nvd.get("vulnerabilities"), list) else []
             compact = [_compact_nvd_item(item) for item in vulns if isinstance(item, dict)]
             compact.sort(key=lambda item: (float(item.get("cvss_score") or 0.0), str(item.get("published") or "")), reverse=True)

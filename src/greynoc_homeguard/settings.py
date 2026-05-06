@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import utcnow
-from .paths import settings_file
+from .paths import atomic_write_text, settings_file
 
 SETTINGS_SCHEMA_VERSION = "1.0"
 ONBOARDING_VERSION = "2026.05"
@@ -70,8 +70,7 @@ class AppSettings:
 
     def save(self) -> None:
         assert self.path is not None
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.data, indent=2, sort_keys=True), encoding="utf-8")
+        atomic_write_text(self.path, json.dumps(self.data, indent=2, sort_keys=True))
 
     def onboarding_needed(self) -> bool:
         onboarding = self.data.get("onboarding") if isinstance(self.data.get("onboarding"), dict) else {}
