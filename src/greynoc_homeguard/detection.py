@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -11,10 +12,10 @@ from .models import Device, Finding
 
 SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 SEVERITY_SCORE = {"critical": 95.0, "high": 78.0, "medium": 54.0, "low": 26.0, "info": 8.0}
-CRITICAL_REMOTE_PORTS = {23, 3389, 5900, 445}
-REMOTE_ADMIN_PORTS = {22, 23, 3389, 5900}
+CRITICAL_REMOTE_PORTS = {23, 2323, 3389, 5900, 5938, 445}
+REMOTE_ADMIN_PORTS = {22, 23, 2323, 3389, 5900, 5938, 7547}
 FILE_SHARING_PORTS = {139, 445}
-UNUSUAL_SERVICE_PORTS = {4444, 5555, 6667, 31337}
+UNUSUAL_SERVICE_PORTS = {1080, 2323, 4444, 5555, 6667, 31337}
 SUSPICIOUS_MALWARE_PORTS = UNUSUAL_SERVICE_PORTS
 SERVICE_CLUSTER_PORTS = {
     21,
@@ -25,13 +26,20 @@ SERVICE_CLUSTER_PORTS = {
     443,
     445,
     554,
+    1080,
+    2323,
+    3306,
     3389,
     4444,
     5555,
     5900,
+    5938,
     6667,
+    7547,
     8080,
     8443,
+    8888,
+    9100,
     31337,
 }
 
@@ -87,7 +95,7 @@ class HomeGuardDetectionEngine:
     """
 
     engine_name = "HomeGuard Detection Engine"
-    engine_version = "0.4.0"
+    engine_version = "0.6.0"
 
     def __init__(self, definitions: dict[str, Any] | None = None) -> None:
         self.definitions = definitions or {}
@@ -130,6 +138,9 @@ class HomeGuardDetectionEngine:
             "possible_unauthorized_access": self._detect_possible_unauthorized_access,
             "remote_admin_cluster": self._detect_remote_admin_cluster,
             "possible_malware_service": self._detect_possible_malware_service,
+            "hostname_collision": self._detect_hostname_collision,
+            "custom_hostname_match": self._detect_custom_hostname_match,
+            "custom_mac_prefix_match": self._detect_custom_mac_prefix_match,
         }
         for rule in self.rules:
             if not rule.enabled:
@@ -231,6 +242,14 @@ class HomeGuardDetectionEngine:
                 category="unusual_service",
                 confidence=0.66,
             ),
+            DetectionRule(
+                rule_id="hostname_collision",
+                rule_type="hostname_collision",
+                title="Possible hostname spoofing detected",
+                severity="high",
+                category="possible_intrusion",
+                confidence=0.65,
+            ),
         ]
         risky_ports = risky_ports_from_definitions(definitions)
         for port, (service, severity, why, category) in sorted(risky_ports.items()):
@@ -243,6 +262,56 @@ class HomeGuardDetectionEngine:
                     category=category,
                     confidence=0.78 if severity in {"critical", "high", "medium"} else 0.63,
                     metadata={"port": port, "service": service, "why": why},
+                )
+            )
+        # User-defined hostname watch list. Each entry becomes its own rule
+        # so the existing telemetry, severity scoring, and dedupe paths all
+        # work without special-casing.
+        for index, entry in enumerate(definitions.get("custom_watch_hostnames") or []):
+            if not isinstance(entry, dict):
+                continue
+            pattern = str(entry.get("pattern") or "").strip().lower()
+            if not pattern:
+                continue
+            digest = hashlib.sha256(pattern.encode("utf-8")).hexdigest()[:8]
+            severity = str(entry.get("severity") or "medium")
+            rules.append(
+                DetectionRule(
+                    rule_id=f"custom_hostname_{digest}",
+                    rule_type="custom_hostname_match",
+                    title="User-defined hostname watch list match",
+                    severity=severity,
+                    category="user_custom_rule",
+                    confidence=0.6,
+                    metadata={
+                        "pattern": pattern,
+                        "why": str(entry.get("why") or ""),
+                        "index": index,
+                    },
+                )
+            )
+        # User-defined MAC OUI watch list.
+        for index, entry in enumerate(definitions.get("custom_watch_mac_prefixes") or []):
+            if not isinstance(entry, dict):
+                continue
+            prefix = str(entry.get("prefix") or "").strip().lower()
+            if not prefix:
+                continue
+            digest = hashlib.sha256(prefix.encode("utf-8")).hexdigest()[:8]
+            severity = str(entry.get("severity") or "medium")
+            rules.append(
+                DetectionRule(
+                    rule_id=f"custom_mac_{digest}",
+                    rule_type="custom_mac_prefix_match",
+                    title="User-defined MAC OUI watch list match",
+                    severity=severity,
+                    category="user_custom_rule",
+                    confidence=0.65,
+                    metadata={
+                        "prefix": prefix,
+                        "why": str(entry.get("why") or ""),
+                        "index": index,
+                    },
                 )
             )
         return rules
@@ -329,6 +398,62 @@ class HomeGuardDetectionEngine:
                     "trust_state": "quarantined",
                     "owner": record.get("owner") or "unknown",
                     "device_type": record.get("device_type") or "unknown",
+                },
+            )
+        ]
+
+    def _detect_hostname_collision(
+        self, rule: DetectionRule, device: Device, baseline: BaselineStore | None
+    ) -> list[Finding]:
+        """Flag when an unknown device on the LAN reuses a baselined hostname.
+
+        ``Device.fingerprint()`` falls back to ``host:<hostname>`` when no
+        MAC is visible. Without this check, an attacker connecting to the
+        WiFi and configuring the same hostname as a baselined trusted
+        device would inherit that trust silently — ``new_device`` and
+        ``possible_unauthorized_access`` both gate on ``baseline.known()``
+        and would stay quiet. This detector cross-references the live IP
+        against the IP stored on the matching baseline record so the user
+        gets a clear high-priority signal on the first scan.
+        """
+
+        if baseline is None or not baseline.known(device):
+            return []
+        if baseline.identity_matches(device):
+            return []
+        record = baseline.get(device)
+        name = device.hostname or device.vendor or device.ip
+        stored_ip = str(record.get("ip") or "")
+        stored_mac = str(record.get("mac_address") or "")
+        return [
+            self._mk(
+                rule_id=rule.rule_id,
+                title=f"Possible hostname spoofing on the home network: {name}",
+                severity=rule.severity,
+                confidence=rule.confidence,
+                category=rule.category,
+                device=device,
+                plain_english=(
+                    f"HomeGuard previously saw a device named {name} at {stored_ip or 'a different IP'}. "
+                    f"It is now active at {device.ip}, which can happen if you replaced the device or its IP "
+                    "address rotated, but it is also one of the clearest signs of an unknown device on your "
+                    "network claiming the same name as a trusted one."
+                ),
+                recommended_actions=[
+                    "Confirm whether you replaced or reconfigured this device.",
+                    "If you did not, treat the new device as untrusted: change the WiFi password and review "
+                    "the router's connected-device list for unfamiliar entries.",
+                    "Remove the old known-device entry in HomeGuard once you have verified the change so the "
+                    "alert clears on the next scan.",
+                ],
+                evidence={
+                    "fingerprint": device.fingerprint(),
+                    "current_ip": device.ip,
+                    "current_mac": device.mac_address,
+                    "stored_ip": stored_ip,
+                    "stored_mac": stored_mac,
+                    "baseline_first_seen": record.get("first_seen", ""),
+                    "baseline_last_seen": record.get("last_seen", ""),
                 },
             )
         ]
@@ -606,6 +731,83 @@ class HomeGuardDetectionEngine:
                 )
             )
         return findings
+
+    def _detect_custom_hostname_match(
+        self, rule: DetectionRule, device: Device, _baseline: BaselineStore | None
+    ) -> list[Finding]:
+        pattern = str(rule.metadata.get("pattern") or "").strip().lower()
+        hostname = (device.hostname or "").strip().lower()
+        if not pattern or not hostname:
+            return []
+        if not fnmatch.fnmatchcase(hostname, pattern):
+            return []
+        why = str(rule.metadata.get("why") or "Hostname matched a custom watch list entry.")
+        name = device.hostname or device.vendor or device.ip
+        return [
+            self._mk(
+                rule_id=rule.rule_id,
+                title=f"Custom hostname watch list match: {name}",
+                severity=rule.severity,
+                confidence=rule.confidence,
+                category=rule.category,
+                device=device,
+                plain_english=(
+                    f"{name} matched the hostname pattern {pattern!r} from your local custom rules. {why}"
+                ),
+                recommended_actions=[
+                    "Confirm this device is supposed to be on your network.",
+                    "If it is unexpected, remove it from WiFi or change the WiFi password.",
+                    "Edit your custom_rules.json file to refine or remove this rule if it no longer applies.",
+                ],
+                evidence={
+                    "matched_pattern": pattern,
+                    "hostname": device.hostname,
+                    "ip": device.ip,
+                    "rule_source": "custom_rules.json",
+                },
+            )
+        ]
+
+    def _detect_custom_mac_prefix_match(
+        self, rule: DetectionRule, device: Device, _baseline: BaselineStore | None
+    ) -> list[Finding]:
+        prefix = str(rule.metadata.get("prefix") or "").strip().lower()
+        mac = (device.mac_address or "").strip().lower()
+        if not prefix or not mac:
+            return []
+        cleaned = "".join(char for char in mac if char in "0123456789abcdef")
+        if len(cleaned) < 6:
+            return []
+        normalized = ":".join(cleaned[i : i + 2] for i in range(0, 6, 2))
+        if not normalized.startswith(prefix):
+            return []
+        why = str(rule.metadata.get("why") or "MAC OUI matched a custom watch list entry.")
+        name = device.hostname or device.vendor or device.ip
+        return [
+            self._mk(
+                rule_id=rule.rule_id,
+                title=f"Custom MAC OUI watch list match: {name}",
+                severity=rule.severity,
+                confidence=rule.confidence,
+                category=rule.category,
+                device=device,
+                plain_english=(
+                    f"{name} ({device.ip}) has a MAC starting with {prefix} which matches a vendor "
+                    f"prefix you flagged in custom rules. {why}"
+                ),
+                recommended_actions=[
+                    "Confirm whether this device is expected.",
+                    "Check vendor advisories for known issues with this hardware.",
+                    "Edit your custom_rules.json file to refine or remove this rule if it no longer applies.",
+                ],
+                evidence={
+                    "matched_prefix": prefix,
+                    "mac_oui": normalized,
+                    "ip": device.ip,
+                    "rule_source": "custom_rules.json",
+                },
+            )
+        ]
 
     def _detect_kev_hints(self, rule: DetectionRule, device: Device, _baseline: BaselineStore | None) -> list[Finding]:
         findings: list[Finding] = []

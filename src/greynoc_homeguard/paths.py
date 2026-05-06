@@ -2,10 +2,53 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 APP_VENDOR = "GreyNOC"
 APP_NAME = "HomeGuard"
+
+
+def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Write ``content`` to ``path`` atomically.
+
+    The naive ``Path.write_text`` opens the destination in truncate mode and
+    can leave a half-written or zero-byte file behind if the process is
+    killed mid-write — power loss, ``taskkill``, OOM, or a crash. Several of
+    HomeGuard's persistence layers (trust store, definitions cache,
+    schedule, history, settings) then fall back to defaults on the next
+    load and silently lose user state.
+
+    Write to a sibling tempfile in the same directory (so the rename stays
+    on the same filesystem), flush to disk, and ``os.replace`` to swap into
+    place. ``os.replace`` is atomic on both POSIX and Windows when source
+    and destination are on the same volume, which they are here because
+    the temp file is created next to the destination.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as handle:
+            handle.write(content)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                # fsync is best-effort; some filesystems / Windows shares
+                # don't support it. The os.replace below still gives us
+                # atomic semantics relative to readers.
+                pass
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def app_root() -> Path:
@@ -91,6 +134,13 @@ def schedule_file() -> Path:
 
 def settings_file() -> Path:
     return user_data_dir() / "settings.json"
+
+
+def custom_rules_file() -> Path:
+    """User-editable JSON file with custom detection rules. Optional; if
+    missing, no custom rules are applied."""
+
+    return user_data_dir() / "custom_rules.json"
 
 
 def logs_dir() -> Path:

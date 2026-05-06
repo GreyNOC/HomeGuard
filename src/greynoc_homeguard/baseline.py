@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .models import Device, utcnow
+from .paths import atomic_write_text
 
 TRUST_TRUSTED = "trusted"
 TRUST_UNKNOWN = "unknown"
@@ -51,9 +52,8 @@ class BaselineStore:
         return self
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self.data, indent=2, sort_keys=True), encoding="utf-8"
+        atomic_write_text(
+            self.path, json.dumps(self.data, indent=2, sort_keys=True)
         )
 
     # ------------------------------------------------------------------
@@ -61,6 +61,33 @@ class BaselineStore:
     # ------------------------------------------------------------------
     def known(self, device: Device) -> bool:
         return device.fingerprint() in self.data.get("devices", {})
+
+    def identity_matches(self, device: Device) -> bool:
+        """Return True when the live device lines up with the baseline record.
+
+        For MAC-based fingerprints the MAC itself IS the identity, so any
+        record found via fingerprint lookup is by definition the same
+        physical device. For hostname-only fingerprints — which happen
+        when the MAC is not visible (privacy MAC randomization not in
+        ARP yet, neighbor table INCOMPLETE state, imported JSON devices)
+        — an attacker on the network could re-use a baselined hostname
+        to inherit trust silently. In that case we cross-check the
+        stored IP against the live IP and treat a mismatch as a possible
+        spoof so the detection engine can emit a hostname-collision
+        finding before any baseline update overwrites the prior identity.
+        """
+
+        record = self.get(device)
+        if not record:
+            return False
+        fingerprint = device.fingerprint()
+        if not fingerprint.startswith("host:"):
+            return True
+        stored_ip = str(record.get("ip") or "").strip()
+        live_ip = (device.ip or "").strip()
+        if stored_ip and live_ip and stored_ip != live_ip:
+            return False
+        return True
 
     def get(self, device: Device) -> dict[str, Any]:
         return dict(self.data.get("devices", {}).get(device.fingerprint(), {}))

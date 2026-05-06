@@ -14,9 +14,12 @@ from .baseline import (
     OWNER_VALUES,
     DEVICE_TYPES,
     TRUST_VALUES,
-    TRUST_QUARANTINED,
-    TRUST_TRUSTED,
     TRUST_UNKNOWN,
+)
+from .custom_rules import (
+    has_any_rules,
+    load_custom_rules,
+    write_example,
 )
 from .dashboard import serve_report
 from .definitions import DefinitionManager
@@ -24,8 +27,13 @@ from .engine import HomeGuardEngine
 from .history import ProtectionHistory
 from .logging_setup import setup_logging
 from .models import Device
-from .network import NetworkSensorConfig, detect_local_interfaces, discover_lan_hosts
-from .paths import default_baseline_path, default_output_dir, ensure_app_dirs, user_data_dir
+from .paths import (
+    custom_rules_file,
+    default_baseline_path,
+    default_output_dir,
+    ensure_app_dirs,
+    user_data_dir,
+)
 from .reports import export_report
 from .scan_runner import run_full_scan
 from .scheduler import INTERVAL_VALUES, ScheduleManager
@@ -365,6 +373,47 @@ def cmd_update_definitions(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_definitions(args: argparse.Namespace) -> int:
+    result = DefinitionManager().import_from_file(args.input)
+    if not result.get("ok"):
+        print(f"error: {result.get('message') or 'Import failed'}", file=sys.stderr)
+        return 2
+    print(f"Imported HomeGuard security definitions from {args.input}")
+    print(f"  KEV records   : {result.get('kev_count', 0)}")
+    print(f"  CVE records   : {result.get('cve_count', 0)}")
+    print(f"  version       : {result.get('definitions_version')}")
+    return 0
+
+
+def cmd_custom_rules_show(_args: argparse.Namespace) -> int:
+    path = custom_rules_file()
+    custom = load_custom_rules(path)
+    print("HomeGuard custom rules:")
+    print(f"  path                : {path}")
+    if not path.exists():
+        print("  status              : no file (custom rules disabled)")
+        print(f"  hint                : run `{_command('custom-rules init')}` to seed an example")
+        return 0
+    if not has_any_rules(custom):
+        print("  status              : file exists but has zero valid rules")
+        return 0
+    print(f"  risky_ports         : {len(custom['risky_ports'])}")
+    print(f"  watch_hostnames     : {len(custom['watch_hostnames'])}")
+    print(f"  watch_mac_prefixes  : {len(custom['watch_mac_prefixes'])}")
+    return 0
+
+
+def cmd_custom_rules_init(args: argparse.Namespace) -> int:
+    try:
+        target = write_example(force=bool(args.force))
+    except FileExistsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"Wrote starter custom rules to {target}")
+    print("Edit the file in any text editor, then run a scan to apply your rules.")
+    return 0
+
+
 def cmd_definitions_status(_args: argparse.Namespace) -> int:
     status = DefinitionManager().status()
     _panel(
@@ -388,7 +437,12 @@ def cmd_definitions_status(_args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    serve_report(args.report, host=args.host, port=args.port)
+    serve_report(
+        args.report,
+        host=args.host,
+        port=args.port,
+        allow_lan=getattr(args, "allow_lan", False),
+    )
     return 0
 
 
@@ -656,10 +710,39 @@ def build_parser() -> argparse.ArgumentParser:
     defs_status = sub.add_parser("definitions-status", help="Show local security definition status", formatter_class=HomeGuardHelpFormatter)
     defs_status.set_defaults(func=cmd_definitions_status)
 
+    import_defs = sub.add_parser(
+        "import-definitions",
+        help="Import a HomeGuard security_definitions.json from another machine (offline / air-gapped)",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    import_defs.add_argument("--input", required=True, help="Path to a HomeGuard security_definitions.json file")
+    import_defs.set_defaults(func=cmd_import_definitions)
+
+    custom = sub.add_parser(
+        "custom-rules",
+        help="Manage user-defined detection rules (custom_rules.json)",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    custom_sub = custom.add_subparsers(dest="custom_command", required=True)
+    custom_show = custom_sub.add_parser("show", help="Show current custom rules path and counts", formatter_class=HomeGuardHelpFormatter)
+    custom_show.set_defaults(func=cmd_custom_rules_show)
+    custom_init = custom_sub.add_parser("init", help="Write an example custom_rules.json into your app data folder", formatter_class=HomeGuardHelpFormatter)
+    custom_init.add_argument("--force", action="store_true", help="Overwrite an existing file")
+    custom_init.set_defaults(func=cmd_custom_rules_init)
+
     dash = sub.add_parser("dashboard", help="Serve a local dashboard for a report JSON", formatter_class=HomeGuardHelpFormatter)
     dash.add_argument("--report", required=True, help="Path to report.json")
-    dash.add_argument("--host", default="127.0.0.1")
+    dash.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1; non-loopback requires --allow-lan)",
+    )
     dash.add_argument("--port", type=int, default=8765)
+    dash.add_argument(
+        "--allow-lan",
+        action="store_true",
+        help="Acknowledge that you intend to expose the report to your LAN. Required when --host is not a loopback address.",
+    )
     dash.set_defaults(func=cmd_dashboard)
 
     gui = sub.add_parser("gui", help="Launch the desktop GUI", formatter_class=HomeGuardHelpFormatter)

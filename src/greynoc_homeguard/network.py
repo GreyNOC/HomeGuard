@@ -62,7 +62,11 @@ class NetworkSensorConfig:
     command_timeout_seconds: float = 1.2
     tcp_connect_timeout_seconds: float = 0.45
     tcp_ports: list[int] = field(
-        default_factory=lambda: [22, 23, 53, 80, 139, 443, 445, 554, 3389, 4444, 5555, 5900, 6667, 8080, 8443, 31337]
+        default_factory=lambda: [
+            21, 22, 23, 53, 80, 139, 443, 445, 554,
+            1080, 2323, 3306, 3389, 4444, 5555, 5900, 5938, 6667,
+            7547, 8080, 8443, 8888, 9100, 31337,
+        ]
     )
     cidrs: list[str] = field(default_factory=list)
 

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .baseline import BaselineStore
+from .definitions import DefinitionManager, active_scan_ports
+from .diff import compute_scan_diff, load_previous_report, render_summary
 from .engine import HomeGuardEngine
 from .history import HistoryEntry, ProtectionHistory
 from .logging_setup import get_logger
@@ -26,8 +28,6 @@ from .scheduler import ScheduleManager
 from .virus_scanner import run_endpoint_malware_scan
 
 LOG = get_logger("scan_runner")
-
-DEFAULT_PORTS = [22, 23, 53, 80, 139, 443, 445, 554, 3389, 4444, 5555, 5900, 6667, 8080, 8443, 31337]
 
 
 def _emit(progress: Callable[[str], None] | None, message: str) -> None:
@@ -107,12 +107,21 @@ def run_full_scan(
     )
     out = Path(output_dir) if output_dir else _scan_dir()
     _emit(progress, "Preparing local network and endpoint scan")
+    # Source the active TCP probe set from the live security definitions so
+    # every risky port the detection engine knows about is actually checked.
+    # Falls back gracefully if the definitions store cannot be read.
+    try:
+        definitions = DefinitionManager().load()
+        scan_ports = active_scan_ports(definitions)
+    except Exception as exc:  # pragma: no cover - defensive
+        LOG.warning("Falling back to built-in port list: %s", exc)
+        scan_ports = active_scan_ports({})
     config = NetworkSensorConfig(
         passive_only=not active,
         allow_ping_sweep=active,
         allow_tcp_port_check=active,
         tcp_probe_all_hosts=probe_all,
-        tcp_ports=DEFAULT_PORTS,
+        tcp_ports=scan_ports,
         max_hosts_per_scan=128,
         discovery_workers=32,
     )
@@ -131,13 +140,27 @@ def run_full_scan(
     metadata: dict[str, Any] = {
         "mode": "active" if active else "passive",
         "interfaces": [item.as_dict() for item in interfaces],
-        "ports": DEFAULT_PORTS,
+        "ports": list(scan_ports),
         "known_device_store": "local app data",
     }
     _emit(progress, "Detection engine: evaluating network risk rules")
     engine = HomeGuardEngine()
     report = engine.build_report(devices, baseline=baseline, scan_metadata=metadata)
     _emit(progress, f"Detection engine: emitted {len(report.findings)} network finding(s)")
+
+    # Compute "what changed since last scan" using the previous report's
+    # JSON. Done before endpoint findings are attached so the diff
+    # reflects the same network-only baseline across scans.
+    history_for_diff = ProtectionHistory().load()
+    previous_entry = history_for_diff.latest()
+    previous_report = (
+        load_previous_report(previous_entry.json_path) if previous_entry else None
+    )
+    delta = compute_scan_diff(report, previous_report)
+    report.scan_metadata["delta"] = delta
+    summary_line = render_summary(delta)
+    if summary_line:
+        _emit(progress, summary_line)
     if endpoint_scan:
         try:
             endpoint = run_endpoint_malware_scan(progress=progress)

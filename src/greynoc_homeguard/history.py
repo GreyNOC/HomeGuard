@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import HomeGuardReport, utcnow
-from .paths import history_file
+from .paths import atomic_write_text, history_file
 
 DEFAULT_RETENTION = 30
 
@@ -96,9 +96,8 @@ class ProtectionHistory:
         return self
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self.data, indent=2, sort_keys=True), encoding="utf-8"
+        atomic_write_text(
+            self.path, json.dumps(self.data, indent=2, sort_keys=True)
         )
 
     def entries(self) -> list[HistoryEntry]:

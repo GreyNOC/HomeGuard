@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -11,12 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from .models import utcnow
-from .paths import definitions_file
+from .paths import atomic_write_text, definitions_file
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 NVD_CVE_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 DEFINITIONS_SCHEMA_VERSION = "1.0"
-STARTER_VERSION = "2026.05.02.1"
+STARTER_VERSION = "2026.05.06.1"
 
 DEFAULT_RISKY_PORTS = [
     {"port": 21, "service": "FTP", "severity": "medium", "why": "FTP is often unencrypted. Do not expose it unless you know why it is needed."},
@@ -26,13 +27,20 @@ DEFAULT_RISKY_PORTS = [
     {"port": 139, "service": "NetBIOS", "severity": "medium", "why": "Windows file-sharing services should not be reachable from untrusted devices."},
     {"port": 445, "service": "SMB", "severity": "medium", "why": "SMB file sharing can expose files if permissions are weak."},
     {"port": 554, "service": "RTSP", "severity": "medium", "why": "Camera streaming services can expose video feeds if default passwords are still used."},
+    {"port": 1080, "service": "SOCKS proxy", "severity": "medium", "category": "unusual_service", "why": "Port 1080 is a SOCKS proxy. It can be legitimate, but an unexpected proxy on a home device can relay traffic and should be reviewed."},
+    {"port": 2323, "service": "Telnet alternate", "severity": "high", "category": "unusual_service", "why": "Port 2323 is a Telnet variant commonly scanned on IoT devices. A port-only scan cannot prove compromise, but unexpected Telnet exposure should be disabled."},
+    {"port": 3306, "service": "MySQL", "severity": "medium", "why": "MySQL databases should not be exposed on the home LAN unless you specifically run a database server."},
+    {"port": 3389, "service": "Remote Desktop", "severity": "high", "why": "Remote Desktop should be disabled unless you intentionally use it."},
     {"port": 4444, "service": "Unusual shell or lab listener", "severity": "high", "category": "unusual_service", "why": "Port 4444 is common in labs and testing tools, but it is unusual on normal home devices. Review it if you did not intentionally open it."},
     {"port": 5555, "service": "ADB or debug bridge", "severity": "high", "category": "unusual_service", "why": "Port 5555 is often Android Debug Bridge or a similar debug service. It can be normal for development, but exposed debug access should be confirmed."},
+    {"port": 5900, "service": "VNC", "severity": "high", "why": "VNC remote-control services are risky when left open or weakly protected."},
+    {"port": 5938, "service": "TeamViewer", "severity": "high", "why": "TeamViewer-style remote-control services should only be reachable when you intentionally use them. Confirm the device and software are expected."},
     {"port": 6667, "service": "IRC-style service", "severity": "medium", "category": "unusual_service", "why": "Port 6667 is commonly associated with IRC-style services. It can be normal, but unexpected listeners should be reviewed."},
+    {"port": 7547, "service": "TR-069 router management", "severity": "high", "why": "Port 7547 (CWMP/TR-069) is a router remote-management protocol that has been widely abused against home routers. It should not be reachable unless explicitly required by your provider."},
     {"port": 8080, "service": "HTTP alternate", "severity": "low", "why": "Alternate web admin ports are common but should be reviewed."},
     {"port": 8443, "service": "HTTPS alternate", "severity": "low", "why": "Alternate web admin ports are common but should be reviewed."},
-    {"port": 3389, "service": "Remote Desktop", "severity": "high", "why": "Remote Desktop should be disabled unless you intentionally use it."},
-    {"port": 5900, "service": "VNC", "severity": "high", "why": "VNC remote-control services are risky when left open or weakly protected."},
+    {"port": 8888, "service": "HTTP alternate admin", "severity": "medium", "category": "unusual_service", "why": "Port 8888 hosts legitimate admin pages for some devices but is unusual on many home endpoints. Confirm the device and service are expected."},
+    {"port": 9100, "service": "Raw printing (JetDirect)", "severity": "medium", "why": "Raw print services can be abused to exfiltrate documents or send unwanted print jobs from anywhere on the LAN."},
     {"port": 31337, "service": "Unusual legacy service port", "severity": "high", "category": "unusual_service", "why": "Port 31337 is historically unusual on home devices. A port-only scan cannot prove malicious use, but unexpected exposure should be reviewed."},
 ]
 
@@ -115,15 +123,24 @@ def _default_definitions() -> dict[str, Any]:
     }
 
 
-def _http_json(url: str, *, timeout: float = 25.0, attempts: int = 3) -> dict[str, Any]:
+def _http_json(
+    url: str,
+    *,
+    timeout: float = 25.0,
+    attempts: int = 3,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     last_exc: Exception | None = None
+    headers = {
+        "User-Agent": "HomeGuard/0.5 security-definitions-updater",
+        "Accept": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     for attempt in range(1, max(1, attempts) + 1):
         request = urllib.request.Request(
             url,
-            headers={
-                "User-Agent": "HomeGuard/0.5 security-definitions-updater",
-                "Accept": "application/json",
-            },
+            headers=headers,
             method="GET",
         )
         try:
@@ -223,14 +240,35 @@ class DefinitionManager:
         if not isinstance(data, dict):
             data = _default_definitions()
         defaults = _default_definitions()
+        # Migrate built-in static rule fields (risky_ports, device_name_hints,
+        # product_hints) when the bundled starter version moves forward. Older
+        # installs would otherwise be stuck on whatever risky port list shipped
+        # the day they first ran HomeGuard, even after `update-definitions`,
+        # because that command only refreshes the KEV/CVE feeds.
+        feed_versions = dict(data.get("feed_versions") or {})
+        bundled_starter = str(feed_versions.get("starter") or "")
+        if bundled_starter != STARTER_VERSION:
+            data["risky_ports"] = defaults["risky_ports"]
+            data["device_name_hints"] = defaults["device_name_hints"]
+            data["product_hints"] = defaults["product_hints"]
+            feed_versions["starter"] = STARTER_VERSION
+            data["feed_versions"] = feed_versions
+            feed_timestamps = dict(data.get("feed_timestamps") or {})
+            feed_timestamps["starter"] = utcnow()
+            data["feed_timestamps"] = feed_timestamps
+            source_status = dict(data.get("source_status") or {})
+            source_status["starter"] = {
+                "ok": True,
+                "message": f"Starter definitions migrated to {STARTER_VERSION}.",
+            }
+            data["source_status"] = source_status
         for key, value in defaults.items():
             data.setdefault(key, value)
         return data
 
     def save(self, data: dict[str, Any]) -> None:
         assert self.path is not None
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        atomic_write_text(self.path, json.dumps(data, indent=2, sort_keys=True))
 
     def status(self) -> dict[str, Any]:
         data = self.load()
@@ -264,6 +302,112 @@ class DefinitionManager:
             "sources": list(data.get("sources") or ["starter", "cisa_kev", "nvd_recent_cves"]),
             "source_status": data.get("source_status") or {},
             "notice": data.get("notice") or "",
+        }
+
+    def import_from_file(self, path: str | Path) -> dict[str, Any]:
+        """Import a HomeGuard definitions JSON exported from another machine.
+
+        Designed for offline / air-gapped use: a connected device runs
+        ``update-definitions``, copies ``security_definitions.json`` to
+        a USB stick, and the offline device runs
+        ``homeguard import-definitions --input <file>`` to absorb the
+        KEV/CVE intelligence without ever reaching CISA or NVD itself.
+
+        Imports the recognized cache fields (``kev_catalog``,
+        ``recent_cves``) verbatim. Built-in static fields (risky_ports,
+        device_name_hints, product_hints) are NOT touched here so the
+        bundled-version migration in ``load()`` remains the single
+        source of truth for those, and so two override paths
+        (``import-definitions`` and ``custom_rules.json``) don't fight
+        each other. Returns a status dict; the file is left untouched
+        if any validation step fails.
+        """
+
+        target = Path(path)
+        if not target.exists():
+            return {"ok": False, "message": f"File not found: {path}"}
+        try:
+            raw = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"ok": False, "message": f"Could not read JSON: {exc}"}
+        if not isinstance(raw, dict):
+            return {"ok": False, "message": "Top-level JSON value must be an object."}
+        known_keys = {"kev_catalog", "recent_cves", "definitions_version", "feed_versions"}
+        if not (set(raw.keys()) & known_keys):
+            return {
+                "ok": False,
+                "message": (
+                    "File does not contain any HomeGuard definition fields. "
+                    "Expected at least one of: " + ", ".join(sorted(known_keys))
+                ),
+            }
+
+        data = self.load()
+
+        kev_in = raw.get("kev_catalog")
+        kev_imported = 0
+        if isinstance(kev_in, list):
+            compact: list[dict[str, Any]] = []
+            for item in kev_in:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("cve_id"):
+                    compact.append(item)
+                elif item.get("cveID"):
+                    compact.append(_compact_kev_item(item))
+            data["kev_catalog"] = compact
+            kev_imported = len(compact)
+
+        cve_in = raw.get("recent_cves")
+        cve_imported = 0
+        if isinstance(cve_in, list):
+            cves = [
+                item for item in cve_in if isinstance(item, dict) and item.get("cve_id")
+            ]
+            data["recent_cves"] = cves
+            cve_imported = len(cves)
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        data["definitions_version"] = str(
+            raw.get("definitions_version") or now.strftime("%Y.%m.%d.%H%M")
+        )
+        data["last_updated"] = utcnow()
+        data["updated_at"] = data["last_updated"]
+        data["update_status"] = UPDATE_STATUS_CURRENT
+        data["record_count"] = (
+            len(data.get("kev_catalog") or []) + len(data.get("recent_cves") or [])
+        )
+        statuses = dict(data.get("source_status") or {})
+        statuses["imported"] = {
+            "ok": True,
+            "message": (
+                f"Imported {kev_imported} KEV record(s) and {cve_imported} CVE record(s) "
+                f"from {target.name}."
+            ),
+            "updated_at": data["last_updated"],
+            "source": str(target),
+        }
+        data["source_status"] = statuses
+        data["sources"] = sorted(
+            set(list(data.get("sources") or []) + ["starter", "imported"])
+        )
+        feed_versions = dict(data.get("feed_versions") or {})
+        if isinstance(raw.get("feed_versions"), dict):
+            for feed_name in ("cisa_kev", "nvd_recent_cves"):
+                if raw["feed_versions"].get(feed_name):
+                    feed_versions[feed_name] = str(raw["feed_versions"][feed_name])
+        data["feed_versions"] = feed_versions
+        feed_timestamps = dict(data.get("feed_timestamps") or {})
+        feed_timestamps["imported"] = data["last_updated"]
+        data["feed_timestamps"] = feed_timestamps
+        self.save(data)
+        return {
+            "ok": True,
+            "message": "Definitions imported.",
+            "kev_count": kev_imported,
+            "cve_count": cve_imported,
+            "definitions_version": str(data["definitions_version"]),
+            "source": str(target),
         }
 
     def update_from_sources(self, *, nvd_days: int = 30) -> dict[str, Any]:
@@ -305,7 +449,17 @@ class DefinitionManager:
                 }
             )
             url = f"{NVD_CVE_API_URL}?{query}&noRejected"
-            nvd = _http_json(url)
+            # NVD throttles unauthenticated traffic to ~5 requests per 30s
+            # without an API key. Users on slower networks or running
+            # update-definitions repeatedly hit those limits and get
+            # update_failed. An API key (free, request via NVD self-service)
+            # raises the limit to ~50/30s. Read it from the environment so
+            # the secret never lands in any of HomeGuard's persisted files.
+            nvd_headers: dict[str, str] = {}
+            api_key = os.environ.get("HOMEGUARD_NVD_API_KEY", "").strip()
+            if api_key:
+                nvd_headers["apiKey"] = api_key
+            nvd = _http_json(url, extra_headers=nvd_headers or None)
             vulns = nvd.get("vulnerabilities") if isinstance(nvd.get("vulnerabilities"), list) else []
             compact = [_compact_nvd_item(item) for item in vulns if isinstance(item, dict)]
             compact.sort(key=lambda item: (float(item.get("cvss_score") or 0.0), str(item.get("published") or "")), reverse=True)
@@ -341,6 +495,45 @@ class DefinitionManager:
             data["update_status"] = UPDATE_STATUS_FAILED
         self.save(data)
         return self.status()
+
+
+DISCOVERY_BASE_PORTS: tuple[int, ...] = (53, 80, 443)
+
+
+def active_scan_ports(
+    definitions: dict[str, Any] | None = None,
+    *,
+    extras: tuple[int, ...] = DISCOVERY_BASE_PORTS,
+) -> list[int]:
+    """Return the active TCP probe port set for HomeGuard scans.
+
+    Sourced from the current ``risky_ports`` definitions plus a small set of
+    discovery defaults (DNS/HTTP/HTTPS) so unfamiliar but unrouted devices still
+    surface in the report. Centralizing this makes the scanner and the rule
+    catalog stay in sync — whenever a port is added to the definitions it is
+    automatically probed by active scans.
+    """
+
+    if definitions is None:
+        definitions = DefinitionManager().load()
+    ports: set[int] = set()
+    for row in (definitions.get("risky_ports") or []):
+        if not isinstance(row, dict):
+            continue
+        try:
+            port = int(row.get("port"))
+        except (TypeError, ValueError):
+            continue
+        if 0 < port <= 65535:
+            ports.add(port)
+    for port in extras:
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            continue
+        if 0 < value <= 65535:
+            ports.add(value)
+    return sorted(ports)
 
 
 def risky_ports_from_definitions(definitions: dict[str, Any]) -> dict[int, tuple[str, str, str, str]]:
