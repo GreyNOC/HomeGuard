@@ -691,6 +691,204 @@ class SettingsTests(unittest.TestCase):
             self.assertNotIn("hg_test", AppSettings(path).load().ignored_finding_ids())
 
 
+class AtomicWriteTests(unittest.TestCase):
+    def test_atomic_write_replaces_existing_file(self):
+        from greynoc_homeguard.paths import atomic_write_text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "data.json"
+            atomic_write_text(target, '{"a": 1}')
+            self.assertEqual(target.read_text(encoding="utf-8"), '{"a": 1}')
+            atomic_write_text(target, '{"a": 2}')
+            self.assertEqual(target.read_text(encoding="utf-8"), '{"a": 2}')
+            # No leftover .tmp files in the directory.
+            leftovers = [
+                child for child in target.parent.iterdir() if child.name != target.name
+            ]
+            self.assertEqual(leftovers, [])
+
+    def test_atomic_write_does_not_truncate_on_failure(self):
+        from greynoc_homeguard.paths import atomic_write_text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "data.json"
+            target.write_text('{"existing": true}', encoding="utf-8")
+            from unittest.mock import patch
+
+            with patch("os.replace", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    atomic_write_text(target, '{"would corrupt": true}')
+            # Original file is intact, no half-written content.
+            self.assertEqual(
+                target.read_text(encoding="utf-8"), '{"existing": true}'
+            )
+            # The temp file has been cleaned up.
+            leftovers = [
+                child for child in target.parent.iterdir() if child.name != target.name
+            ]
+            self.assertEqual(leftovers, [])
+
+
+class DashboardHostGuardTests(unittest.TestCase):
+    def test_loopback_classification(self):
+        from greynoc_homeguard.dashboard import _is_loopback_host
+
+        self.assertTrue(_is_loopback_host("127.0.0.1"))
+        self.assertTrue(_is_loopback_host("localhost"))
+        self.assertTrue(_is_loopback_host("::1"))
+        self.assertFalse(_is_loopback_host("0.0.0.0"))
+        self.assertFalse(_is_loopback_host("192.168.1.50"))
+        self.assertFalse(_is_loopback_host("example.com"))
+
+    def test_serve_report_refuses_non_loopback_without_allow_lan(self):
+        from greynoc_homeguard.dashboard import serve_report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report(
+                [Device(ip="192.168.1.10", open_ports=[80])]
+            )
+            paths = export_report(report, tmp)
+            with self.assertRaises(ValueError) as ctx:
+                serve_report(paths["json"], host="0.0.0.0", port=8765)
+            self.assertIn("loopback", str(ctx.exception).lower())
+
+
+class NvdApiKeyTests(_AppDataMixin, unittest.TestCase):
+    def test_api_key_env_is_attached_to_nvd_request(self):
+        from greynoc_homeguard.definitions import DefinitionManager
+
+        self._isolate()
+        manager = DefinitionManager()
+        captured: list[dict[str, str]] = []
+
+        def fake_http_json(url, *, timeout=25.0, attempts=3, extra_headers=None):
+            captured.append(dict(extra_headers or {}))
+            if "cisa.gov" in url:
+                return {"vulnerabilities": [], "catalogVersion": "2026"}
+            return {"vulnerabilities": []}
+
+        env = {"HOMEGUARD_NVD_API_KEY": "abcd-1234"}
+        with mock.patch(
+            "greynoc_homeguard.definitions._http_json", side_effect=fake_http_json
+        ), mock.patch.dict(os.environ, env, clear=False):
+            manager.update_from_sources(nvd_days=1)
+
+        # Two requests: KEV (no api key needed) and NVD (api key attached).
+        nvd_call_headers = captured[1] if len(captured) >= 2 else {}
+        self.assertEqual(nvd_call_headers.get("apiKey"), "abcd-1234")
+
+
+class ScanDiffTests(unittest.TestCase):
+    def test_diff_against_no_previous_returns_unavailable(self):
+        from greynoc_homeguard.diff import compute_scan_diff
+
+        report = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.10", open_ports=[80])]
+        )
+        delta = compute_scan_diff(report, None)
+        self.assertFalse(delta["available"])
+
+    def test_diff_surfaces_new_devices_new_ports_and_resolved_findings(self):
+        from greynoc_homeguard.diff import compute_scan_diff, render_summary
+
+        # Previous scan: just the router on port 80.
+        previous_report = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.1", hostname="router", open_ports=[80])]
+        ).as_dict()
+
+        # Current scan: router gained Telnet (new port + new high-severity
+        # finding), a new device appeared, and the router's HTTP-on-80
+        # finding still exists (so should not be 'added').
+        current = HomeGuardEngine().build_report(
+            [
+                Device(ip="192.168.1.1", hostname="router", open_ports=[80, 23]),
+                Device(ip="192.168.1.99", hostname="laptop", open_ports=[]),
+            ]
+        )
+        delta = compute_scan_diff(current, previous_report)
+        self.assertTrue(delta["available"])
+
+        added_ips = {item["ip"] for item in delta["devices"]["added"]}
+        self.assertIn("192.168.1.99", added_ips)
+        self.assertEqual(len(delta["devices"]["removed"]), 0)
+        new_port_rows = delta["devices"]["with_new_ports"]
+        self.assertTrue(
+            any(
+                row["ip"] == "192.168.1.1" and 23 in row["newly_open"]
+                for row in new_port_rows
+            )
+        )
+        added_rule_ids = {item["rule_id"] for item in delta["findings"]["added"]}
+        self.assertIn("risky_port_23", added_rule_ids)
+        # Re-emitted findings are not flagged as new.
+        self.assertNotIn("risky_port_80", added_rule_ids)
+
+        summary = render_summary(delta)
+        self.assertIn("new device", summary)
+        self.assertIn("newly open port", summary)
+        self.assertIn("new finding", summary)
+
+    def test_diff_detects_resolved_findings_and_improved_risk(self):
+        from greynoc_homeguard.diff import compute_scan_diff
+
+        # Previous: telnet exposed on a device.
+        previous = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.10", hostname="cam", open_ports=[23])]
+        ).as_dict()
+        # Current: telnet closed.
+        current = HomeGuardEngine().build_report(
+            [Device(ip="192.168.1.10", hostname="cam", open_ports=[])]
+        )
+        delta = compute_scan_diff(current, previous)
+        resolved_rules = {item["rule_id"] for item in delta["findings"]["resolved"]}
+        self.assertIn("risky_port_23", resolved_rules)
+        self.assertEqual(delta["risk"]["direction"], "improved")
+
+    def test_run_full_scan_attaches_delta_metadata(self):
+        # Two consecutive scans through run_full_scan: the second scan
+        # must produce a delta attached to scan_metadata referencing
+        # the first scan's report id.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["HOMEGUARD_DATA_DIR"] = tmp
+            ensure_app_dirs()
+            with mock.patch(
+                "greynoc_homeguard.scan_runner.detect_local_interfaces",
+                return_value=[],
+            ):
+                with mock.patch(
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    return_value=[
+                        Device(ip="192.168.1.10", hostname="router", open_ports=[80])
+                    ],
+                ):
+                    out1 = Path(tmp) / "s1"
+                    first, _, _ = run_full_scan(
+                        output_dir=out1, update_known_devices=False
+                    )
+                with mock.patch(
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    return_value=[
+                        Device(
+                            ip="192.168.1.10",
+                            hostname="router",
+                            open_ports=[80, 23],
+                        )
+                    ],
+                ):
+                    out2 = Path(tmp) / "s2"
+                    second, _, _ = run_full_scan(
+                        output_dir=out2, update_known_devices=False
+                    )
+
+            delta = second.scan_metadata.get("delta") or {}
+            self.assertTrue(delta.get("available"))
+            self.assertEqual(delta.get("previous_report_id"), first.report_id)
+            new_port_rows = delta["devices"]["with_new_ports"]
+            self.assertTrue(
+                any(23 in row.get("newly_open", []) for row in new_port_rows)
+            )
+
+
 class CLITests(_AppDataMixin, unittest.TestCase):
     def test_definitions_status_command(self):
         self._isolate()

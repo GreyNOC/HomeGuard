@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import utcnow
-from .paths import definitions_file
+from .paths import atomic_write_text, definitions_file
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 NVD_CVE_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -122,15 +123,24 @@ def _default_definitions() -> dict[str, Any]:
     }
 
 
-def _http_json(url: str, *, timeout: float = 25.0, attempts: int = 3) -> dict[str, Any]:
+def _http_json(
+    url: str,
+    *,
+    timeout: float = 25.0,
+    attempts: int = 3,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     last_exc: Exception | None = None
+    headers = {
+        "User-Agent": "HomeGuard/0.5 security-definitions-updater",
+        "Accept": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     for attempt in range(1, max(1, attempts) + 1):
         request = urllib.request.Request(
             url,
-            headers={
-                "User-Agent": "HomeGuard/0.5 security-definitions-updater",
-                "Accept": "application/json",
-            },
+            headers=headers,
             method="GET",
         )
         try:
@@ -258,8 +268,7 @@ class DefinitionManager:
 
     def save(self, data: dict[str, Any]) -> None:
         assert self.path is not None
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        atomic_write_text(self.path, json.dumps(data, indent=2, sort_keys=True))
 
     def status(self) -> dict[str, Any]:
         data = self.load()
@@ -334,7 +343,17 @@ class DefinitionManager:
                 }
             )
             url = f"{NVD_CVE_API_URL}?{query}&noRejected"
-            nvd = _http_json(url)
+            # NVD throttles unauthenticated traffic to ~5 requests per 30s
+            # without an API key. Users on slower networks or running
+            # update-definitions repeatedly hit those limits and get
+            # update_failed. An API key (free, request via NVD self-service)
+            # raises the limit to ~50/30s. Read it from the environment so
+            # the secret never lands in any of HomeGuard's persisted files.
+            nvd_headers: dict[str, str] = {}
+            api_key = os.environ.get("HOMEGUARD_NVD_API_KEY", "").strip()
+            if api_key:
+                nvd_headers["apiKey"] = api_key
+            nvd = _http_json(url, extra_headers=nvd_headers or None)
             vulns = nvd.get("vulnerabilities") if isinstance(nvd.get("vulnerabilities"), list) else []
             compact = [_compact_nvd_item(item) for item in vulns if isinstance(item, dict)]
             compact.sort(key=lambda item: (float(item.get("cvss_score") or 0.0), str(item.get("published") or "")), reverse=True)

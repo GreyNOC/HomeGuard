@@ -121,7 +121,12 @@ def cmd_definitions_status(_args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    serve_report(args.report, host=args.host, port=args.port)
+    serve_report(
+        args.report,
+        host=args.host,
+        port=args.port,
+        allow_lan=getattr(args, "allow_lan", False),
+    )
     return 0
 
 
@@ -289,8 +294,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     dash = sub.add_parser("dashboard", help="Serve a local dashboard for a report JSON")
     dash.add_argument("--report", required=True, help="Path to report.json")
-    dash.add_argument("--host", default="127.0.0.1")
+    dash.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1; non-loopback requires --allow-lan)",
+    )
     dash.add_argument("--port", type=int, default=8765)
+    dash.add_argument(
+        "--allow-lan",
+        action="store_true",
+        help="Acknowledge that you intend to expose the report to your LAN. Required when --host is not a loopback address.",
+    )
     dash.set_defaults(func=cmd_dashboard)
 
     gui = sub.add_parser("gui", help="Launch the desktop GUI")

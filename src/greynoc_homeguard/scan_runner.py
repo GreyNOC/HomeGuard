@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 from .baseline import BaselineStore
 from .definitions import DefinitionManager, active_scan_ports
+from .diff import compute_scan_diff, load_previous_report, render_summary
 from .engine import HomeGuardEngine
 from .history import HistoryEntry, ProtectionHistory
 from .logging_setup import get_logger
@@ -146,6 +147,20 @@ def run_full_scan(
     engine = HomeGuardEngine()
     report = engine.build_report(devices, baseline=baseline, scan_metadata=metadata)
     _emit(progress, f"Detection engine: emitted {len(report.findings)} network finding(s)")
+
+    # Compute "what changed since last scan" using the previous report's
+    # JSON. Done before endpoint findings are attached so the diff
+    # reflects the same network-only baseline across scans.
+    history_for_diff = ProtectionHistory().load()
+    previous_entry = history_for_diff.latest()
+    previous_report = (
+        load_previous_report(previous_entry.json_path) if previous_entry else None
+    )
+    delta = compute_scan_diff(report, previous_report)
+    report.scan_metadata["delta"] = delta
+    summary_line = render_summary(delta)
+    if summary_line:
+        _emit(progress, summary_line)
     if endpoint_scan:
         try:
             endpoint = run_endpoint_malware_scan(progress=progress)

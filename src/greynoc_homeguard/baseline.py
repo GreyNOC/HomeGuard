@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .models import Device, utcnow
+from .paths import atomic_write_text
 
 TRUST_TRUSTED = "trusted"
 TRUST_UNKNOWN = "unknown"
@@ -51,9 +52,8 @@ class BaselineStore:
         return self
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self.data, indent=2, sort_keys=True), encoding="utf-8"
+        atomic_write_text(
+            self.path, json.dumps(self.data, indent=2, sort_keys=True)
         )
 
     # ------------------------------------------------------------------
