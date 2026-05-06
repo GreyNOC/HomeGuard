@@ -4,6 +4,7 @@ import csv
 import hashlib
 import html
 import json
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -218,6 +219,7 @@ def render_markdown(report: HomeGuardReport) -> str:
 def render_html(report: HomeGuardReport) -> str:
     data = report.as_dict()
     json_payload = html.escape(json.dumps(data, sort_keys=True))
+    csp_nonce = secrets.token_urlsafe(16)
     cards = _protection_cards(report)
     def_status = _scan_metadata(report, "definition_status", {}) or {}
     engine_status = _scan_metadata(report, "detection_engine", {}) or {}
@@ -343,9 +345,9 @@ def render_html(report: HomeGuardReport) -> str:
         ]
 
         risk_label = (
-            f"{html.escape(str(delta_risk.get('previous_risk') or '-'))} → "
+            f"{html.escape(str(delta_risk.get('previous_risk') or '-'))} -> "
             f"{html.escape(str(delta_risk.get('current_risk') or '-'))} "
-            f"(score {delta_risk.get('previous_score', 0)} → {delta_risk.get('current_score', 0)})"
+            f"(score {delta_risk.get('previous_score', 0)} -> {delta_risk.get('current_score', 0)})"
         )
         direction_class = (
             "action" if direction == "worsened" else "ok" if direction == "improved" else "review"
@@ -412,9 +414,10 @@ def render_html(report: HomeGuardReport) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-{csp_nonce}'; script-src 'nonce-{csp_nonce}'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HomeGuard Report</title>
-<style>
+<style nonce="{csp_nonce}">
 :root {{
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #F4F7FB;
@@ -484,12 +487,12 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
 </header>
 <main>
   <nav class="actions" aria-label="Report downloads">
-    <button class="action" onclick="downloadHtmlReport()">Download HTML</button>
+    <button id="downloadHtml" class="action">Download HTML</button>
     <a class="action" href="report.pdf" download>Download PDF</a>
     <a class="action secondary" href="report.json" download>Download JSON</a>
     <a class="action secondary" href="devices.csv" download>Download Devices CSV</a>
     <a class="action secondary" href="findings.csv" download>Download Findings CSV</a>
-    <button class="action secondary" onclick="window.print()">Print / Save as PDF</button>
+    <button id="printReport" class="action secondary">Print / Save as PDF</button>
   </nav>
 
   <section class="summary">
@@ -521,7 +524,7 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
   {family_section}
   {quarantined_section}
 
-  <section class="search"><input id="filter" placeholder="Filter findings or devices..." oninput="filterCards()"></section>
+  <section class="search"><input id="filter" placeholder="Filter findings or devices..."></section>
 
   <h2>Risk Findings</h2>
   <div id="findings">{findings_html}</div>
@@ -540,7 +543,7 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
   <details><summary>Raw report JSON</summary><pre>{json_payload}</pre></details>
 </main>
 <footer>Report {html.escape(report.report_id)} generated {html.escape(report.created_at)}. HomeGuard findings are indicators, not proof of compromise.</footer>
-<script>
+<script nonce="{csp_nonce}">
 function filterCards() {{
   const term = document.getElementById('filter').value.toLowerCase();
   document.querySelectorAll('.finding-card, #devices tbody tr').forEach(el => {{
@@ -559,6 +562,9 @@ function downloadHtmlReport() {{
   a.remove();
   URL.revokeObjectURL(url);
 }}
+document.getElementById('filter').addEventListener('input', filterCards);
+document.getElementById('downloadHtml').addEventListener('click', downloadHtmlReport);
+document.getElementById('printReport').addEventListener('click', () => window.print());
 </script>
 </body>
 </html>"""

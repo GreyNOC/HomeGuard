@@ -163,6 +163,37 @@ function isAllowedReportOrLogPath(targetPath, options = {}) {
   }
 }
 
+const OPENABLE_REPORT_EXTENSIONS = new Set([
+  ".csv",
+  ".html",
+  ".htm",
+  ".json",
+  ".log",
+  ".md",
+  ".pdf",
+  ".sha256",
+  ".txt",
+]);
+
+function isAllowedOpenPath(targetPath) {
+  if (!targetPath || typeof targetPath !== "string") {
+    return false;
+  }
+  const target = path.resolve(targetPath);
+  if (!isAllowedReportOrLogPath(target, { allowDirectory: true })) {
+    return false;
+  }
+  try {
+    const stat = fs.statSync(target);
+    if (stat.isDirectory()) {
+      return true;
+    }
+    return stat.isFile() && OPENABLE_REPORT_EXTENSIONS.has(path.extname(target).toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function safePathLabel(targetPath, fallback = "local file") {
   if (!targetPath) {
     return fallback;
@@ -838,8 +869,8 @@ ipcMain.handle("homeguard:admin-access", async () => {
 
 ipcMain.handle("homeguard:open-path", async (_event, targetPath) => {
   const safeTarget = cleanString(targetPath, 1000);
-  if (!safeTarget || !isAllowedReportOrLogPath(safeTarget, { allowDirectory: true })) {
-    return { ok: false, message: "This path is outside the HomeGuard report/log area." };
+  if (!safeTarget || !isAllowedOpenPath(safeTarget)) {
+    return { ok: false, message: "This path is outside the HomeGuard report/log area or is not a report/log file." };
   }
   const message = await shell.openPath(path.resolve(safeTarget));
   return { ok: !message, message: scrubText(message) };
@@ -847,7 +878,7 @@ ipcMain.handle("homeguard:open-path", async (_event, targetPath) => {
 
 ipcMain.handle("homeguard:show-item", async (_event, targetPath) => {
   const safeTarget = cleanString(targetPath, 1000);
-  if (!safeTarget || !isAllowedReportOrLogPath(safeTarget)) {
+  if (!safeTarget || !isAllowedOpenPath(safeTarget)) {
     return { ok: false };
   }
   shell.showItemInFolder(path.resolve(safeTarget));
