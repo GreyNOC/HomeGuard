@@ -29,6 +29,18 @@ if (!main.includes("frame: false")) {
   throw new Error("Electron BrowserWindow is not configured as frameless.");
 }
 
+if (!main.includes("sandbox: true") || !main.includes("setWindowOpenHandler") || !main.includes('will-navigate"')) {
+  throw new Error("Electron navigation hardening is not enabled.");
+}
+
+if (!main.includes("isAllowedReportOrLogPath") || !main.includes("appDataPath(\"reports\")") || !main.includes("appDataPath(\"logs\")")) {
+  throw new Error("Electron file-opening IPC is not limited to report/log paths.");
+}
+
+if (!main.includes("(?:progress|scan)")) {
+  throw new Error("Electron scan progress parser is not compatible with current CLI progress output.");
+}
+
 if (!main.includes('window.on("minimize"') || !main.includes("hideWindowToTray(window)")) {
   throw new Error("Minimize is not wired to hide the window to the tray.");
 }
@@ -182,7 +194,11 @@ if (!pythonCheck) {
   }
 }
 
-if (pythonCheck && !pythonCheck.stdout.includes("HomeGuard security definitions")) {
+if (
+  pythonCheck &&
+  !pythonCheck.stdout.includes("HomeGuard security definitions") &&
+  !pythonCheck.stdout.includes("Security Definitions")
+) {
   throw new Error("Python CLI wiring did not return the expected HomeGuard output.");
 }
 

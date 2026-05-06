@@ -1,4 +1,6 @@
 import json
+import io
+import ipaddress
 import os
 import tempfile
 import unittest
@@ -39,7 +41,13 @@ from greynoc_homeguard.firewall import (  # noqa: E402
 from greynoc_homeguard.history import ProtectionHistory  # noqa: E402
 from greynoc_homeguard.logging_setup import setup_logging  # noqa: E402
 from greynoc_homeguard.models import Device  # noqa: E402
-from greynoc_homeguard.network import parse_arp_table, parse_neighbor_table  # noqa: E402
+from greynoc_homeguard.network import (  # noqa: E402
+    NetworkSensorConfig,
+    _active_targets,
+    parse_arp_table,
+    parse_neighbor_table,
+    parse_netsh_neighbor_table,
+)
 from greynoc_homeguard.paths import ensure_app_dirs, user_data_dir  # noqa: E402
 from greynoc_homeguard.privacy import privacy_findings, scrub_text  # noqa: E402
 from greynoc_homeguard.protection import (  # noqa: E402
@@ -90,6 +98,30 @@ Interface: 192.168.1.10 --- 0x13
         self.assertEqual(len(hosts), 1)
         self.assertEqual(hosts[0].interface, "wlan0")
         self.assertEqual(hosts[0].status, "reachable")
+
+    def test_parse_windows_netsh_neighbor_table(self):
+        text = """
+Interface 12: Wi-Fi
+Internet Address                              Physical Address   Type
+--------------------------------------------  -----------------  -----------
+192.168.1.1                                   c8-3a-35-aa-bb-cc  Reachable
+224.0.0.22                                    01-00-5e-00-00-16  Permanent
+192.168.1.40                                  b8-78-2e-44-55-66  Stale
+"""
+        hosts = parse_netsh_neighbor_table(text)
+        self.assertEqual([host.ip for host in hosts], ["192.168.1.1", "192.168.1.40"])
+        self.assertEqual(hosts[0].interface, "Wi-Fi")
+        self.assertEqual(hosts[0].source, "netsh_neighbor_table")
+        self.assertEqual(hosts[1].status, "stale")
+
+    def test_active_targets_prioritize_passive_then_sample_subnet(self):
+        network = ipaddress.ip_network("192.168.50.0/24")
+        config = NetworkSensorConfig(max_hosts_per_scan=6)
+        passive = [Device(ip="192.168.50.200"), Device(ip="192.168.50.10")]
+        targets = _active_targets([network], [str(network)], config, passive_hosts=passive)
+        self.assertEqual(targets[:2], ["192.168.50.200", "192.168.50.10"])
+        self.assertIn("192.168.50.254", targets)
+        self.assertNotIn("192.168.50.2", targets)
 
 
 class DetectionEngineTests(unittest.TestCase):
@@ -160,12 +192,15 @@ class DetectionEngineTests(unittest.TestCase):
         rule_ids = {f.rule_id for f in report.findings}
         self.assertIn("definition_hint_windows_remote_access", rule_ids)
 
-    def test_suspicious_backdoor_port_is_possible_malware(self):
+    def test_unusual_service_port_is_review_indicator(self):
         device = Device(ip="192.168.1.93", hostname="unknown", open_ports=[4444])
         report = HomeGuardEngine().build_report([device])
         finding = next(f for f in report.findings if f.rule_id == "possible_malware_service")
-        self.assertEqual(finding.category, "possible_malware")
+        self.assertEqual(finding.category, "unusual_service")
         self.assertEqual(finding.severity, "high")
+        self.assertEqual(finding.evidence["unusual_ports"], [4444])
+        self.assertIn("Port-only indicator", finding.evidence["evidence_note"])
+        self.assertNotIn("malware", finding.title.lower())
 
     def test_mirai_telnet_alternate_is_possible_malware(self):
         # Port 2323 is the Mirai-style Telnet alternate. Without this rule
@@ -571,6 +606,16 @@ class ReportExportTests(unittest.TestCase):
             for key in ("json", "markdown", "html", "devices"):
                 text = paths[key].read_text(encoding="utf-8", errors="ignore")
                 self.assertIn("device id ending 44:55", text)
+
+    def test_exported_reports_do_not_contain_common_mojibake(self):
+        markers = ("Ã", "â€”", "â€“", "â€", "�")
+        with tempfile.TemporaryDirectory() as tmp:
+            report = HomeGuardEngine().build_report([Device(ip="192.168.1.25", hostname="camera", open_ports=[23])])
+            paths = export_report(report, tmp)
+            for key in ("json", "findings", "markdown", "html", "devices", "findings_csv"):
+                text = paths[key].read_text(encoding="utf-8", errors="ignore")
+                for marker in markers:
+                    self.assertNotIn(marker, text, f"{key} contains mojibake marker {marker!r}")
 
 
 class PrivacyRedactionTests(unittest.TestCase):
@@ -1108,6 +1153,42 @@ class ImportDefinitionsTests(_AppDataMixin, unittest.TestCase):
 
 
 class CLITests(_AppDataMixin, unittest.TestCase):
+    def test_cli_prog_uses_gnhl(self):
+        self.assertEqual(cli.build_parser().prog, "GNHL")
+
+    def test_status_command(self):
+        self._isolate()
+        rc = cli.main(["status"])
+        self.assertEqual(rc, 0)
+
+    def test_app_style_status_command(self):
+        self._isolate()
+        rc = cli.main(["--status"])
+        self.assertEqual(rc, 0)
+
+    def test_app_style_scan_alias_preserves_scan_options(self):
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            cli._normalize_app_style_args(["--scan", "--active", "--probe-all", "--no-endpoint-scan"])
+        )
+        self.assertEqual(args.command, "scan")
+        self.assertTrue(args.active)
+        self.assertTrue(args.probe_all)
+        self.assertTrue(args.no_endpoint_scan)
+
+    def test_welcome_splash_uses_app_style_commands(self):
+        self._isolate()
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            rc = cli.main([])
+        output = stdout.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("GNHL Direct App CLI", output)
+        self.assertIn("Direct app commands are ready", output)
+        self.assertIn("GNHL --scan --active", output)
+        self.assertIn("GNHL --status", output)
+        self.assertNotIn("npm run cli", output)
+        self.assertNotIn("homeguard scan", output)
+
     def test_definitions_status_command(self):
         self._isolate()
         rc = cli.main(["definitions-status"])
@@ -1151,6 +1232,8 @@ class BuildScriptTests(unittest.TestCase):
     def test_build_scripts_exist(self):
         repo = Path(__file__).resolve().parents[1]
         for path in [
+            "GNHL",
+            "GNHL.cmd",
             "package.json",
             "run_electron.bat",
             "electron/main.js",
@@ -1160,6 +1243,7 @@ class BuildScriptTests(unittest.TestCase):
             "electron/renderer/renderer.js",
             "electron/smoke.js",
             "scripts/build_exe.py",
+            "scripts/cli.js",
             "scripts/build_windows_installer.ps1",
             "scripts/sign_windows_artifact.ps1",
             "scripts/verify_windows_signature.ps1",
@@ -1175,6 +1259,15 @@ class BuildScriptTests(unittest.TestCase):
             "mobile/android/README.md",
         ]:
             self.assertTrue((repo / path).exists(), f"missing {path}")
+
+        package = json.loads((repo / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(package["scripts"].get("cli"), "node scripts/cli.js")
+        self.assertEqual(package["bin"].get("GNHL"), "scripts/cli.js")
+        node_launcher = (repo / "scripts" / "cli.js").read_text(encoding="utf-8")
+        self.assertIn("process.env.GNHL_LAUNCHER", node_launcher)
+        self.assertIn('npm_lifecycle_event === "cli"', node_launcher)
+        self.assertIn("GNHL_LAUNCHER=repo", (repo / "GNHL").read_text(encoding="utf-8"))
+        self.assertIn("GNHL_LAUNCHER=repo", (repo / "GNHL.cmd").read_text(encoding="utf-8"))
 
     def test_signing_verification_script_fails_closed(self):
         repo = Path(__file__).resolve().parents[1]
@@ -1209,6 +1302,12 @@ class BuildScriptTests(unittest.TestCase):
             self.assertIn(f'$("{button_id}")', renderer)
         for channel in ["homeguard:open-path", "homeguard:show-item", "homeguard:log-state"]:
             self.assertIn(channel, main)
+        self.assertIn("sandbox: true", main)
+        self.assertIn("setWindowOpenHandler", main)
+        self.assertIn('will-navigate"', main)
+        self.assertIn("isAllowedReportOrLogPath", main)
+        self.assertIn("(?:progress|scan)", main)
+        self.assertNotIn("isAllowedAppPath", main)
         combined = "\n".join([html, renderer])
         self.assertNotIn(r"C:\Users\\", combined)
         self.assertNotIn("/Users/", combined)

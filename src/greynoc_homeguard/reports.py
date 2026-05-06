@@ -99,9 +99,9 @@ def render_markdown(report: HomeGuardReport) -> str:
     lines.append("")
     lines.append("## Protection Status")
     lines.append("")
-    lines.append(f"- **Network Protection:** {cards['network'].get('value')} â€” {cards['network'].get('detail', '')}")
-    lines.append(f"- **Device Trust:** {cards['device_trust'].get('value')} â€” {cards['device_trust'].get('detail', '')}")
-    lines.append(f"- **Security Updates:** {cards['updates'].get('value')} â€” {cards['updates'].get('detail', '')}")
+    lines.append(f"- **Network Protection:** {cards['network'].get('value')} - {cards['network'].get('detail', '')}")
+    lines.append(f"- **Device Trust:** {cards['device_trust'].get('value')} - {cards['device_trust'].get('detail', '')}")
+    lines.append(f"- **Security Updates:** {cards['updates'].get('value')} - {cards['updates'].get('detail', '')}")
     lines.append("")
     if isinstance(def_status, dict) and def_status:
         lines.append("## Security Definitions")
@@ -147,7 +147,7 @@ def render_markdown(report: HomeGuardReport) -> str:
         lines.append("")
         for row in quarantined:
             lines.append(
-                f"- {row.get('name', '-')} ({row.get('ip', '-')}) â€” owner: {row.get('owner', 'unknown')}, type: {row.get('device_type', 'unknown')}"
+                f"- {row.get('name', '-')} ({row.get('ip', '-')}) - owner: {row.get('owner', 'unknown')}, type: {row.get('device_type', 'unknown')}"
                 + (" [active in scan]" if row.get("active_in_scan") else " [not on network right now]")
             )
         lines.append("")
@@ -174,7 +174,7 @@ def render_markdown(report: HomeGuardReport) -> str:
         lines.append("")
         for finding in kev_findings:
             lines.append(
-                f"- {finding.title} (priority {finding.priority}) â€” {finding.device_name} ({finding.device_ip})"
+                f"- {finding.title} (priority {finding.priority}) - {finding.device_name} ({finding.device_ip})"
             )
         lines.append("")
 
@@ -478,7 +478,7 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
 </head>
 <body>
 <header>
-  <div class="brand"><div class="brand-mark">GN</div><div><div class="brand-title">HomeGuard</div><div>Consumer Network Protection Report</div></div></div>
+  <div class="brand"><div class="brand-mark">GN</div><div><div class="brand-title">HomeGuard</div><div>Home Network Risk Review Report</div></div></div>
   <h1>Home Security Report</h1>
   <p>{html.escape(report.summary)}</p>
 </header>
@@ -717,7 +717,7 @@ def _header_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
     canvas.drawString(
         0.55 * inch,
         0.34 * inch,
-        "Consumer Network Protection. Findings are indicators, not proof of compromise.",
+        "Home network risk review. Findings are indicators, not proof of compromise.",
     )
     canvas.restoreState()
 
@@ -750,7 +750,7 @@ def write_pdf(path: Path, report: HomeGuardReport) -> None:
     )
     story: list[Any] = []
 
-    # ---- Cover / hero with branded gradient ----
+    # ---- Cover ----
     hero = Table(
         [
             [

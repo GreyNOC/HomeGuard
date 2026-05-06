@@ -5,6 +5,9 @@
   "description": "Electron frontend for HomeGuard.",
   "author": "GreyNOC",
   "main": "electron/main.js",
+  "bin": {
+    "GNHL": "scripts/cli.js"
+  },
   "scripts": {
     "android:debug": "bash scripts/compile_android.sh debug",
     "android:release": "bash scripts/compile_android.sh release",

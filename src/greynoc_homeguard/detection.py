@@ -15,7 +15,8 @@ SEVERITY_SCORE = {"critical": 95.0, "high": 78.0, "medium": 54.0, "low": 26.0, "
 CRITICAL_REMOTE_PORTS = {23, 2323, 3389, 5900, 5938, 445}
 REMOTE_ADMIN_PORTS = {22, 23, 2323, 3389, 5900, 5938, 7547}
 FILE_SHARING_PORTS = {139, 445}
-SUSPICIOUS_MALWARE_PORTS = {1080, 2323, 4444, 5555, 6667, 31337}
+UNUSUAL_SERVICE_PORTS = {1080, 2323, 4444, 5555, 6667, 31337}
+SUSPICIOUS_MALWARE_PORTS = UNUSUAL_SERVICE_PORTS
 SERVICE_CLUSTER_PORTS = {
     21,
     22,
@@ -236,10 +237,10 @@ class HomeGuardDetectionEngine:
             DetectionRule(
                 rule_id="possible_malware_service",
                 rule_type="possible_malware_service",
-                title="Suspicious malware/backdoor-style service detected",
+                title="Unusual service requiring review",
                 severity="high",
-                category="possible_malware",
-                confidence=0.74,
+                category="unusual_service",
+                confidence=0.66,
             ),
             DetectionRule(
                 rule_id="hostname_collision",
@@ -533,8 +534,8 @@ class HomeGuardDetectionEngine:
         threshold = int(rule.metadata.get("threshold") or 2)
         exposed = sorted(set(device.open_ports) & SERVICE_CLUSTER_PORTS)
         remote_exposed = sorted(set(device.open_ports) & REMOTE_ADMIN_PORTS)
-        suspicious_exposed = sorted(set(device.open_ports) & SUSPICIOUS_MALWARE_PORTS)
-        if len(remote_exposed) < threshold and len(suspicious_exposed) < 1 and len(exposed) < 5:
+        unusual_exposed = sorted(set(device.open_ports) & UNUSUAL_SERVICE_PORTS)
+        if len(remote_exposed) < threshold and len(unusual_exposed) < 1 and len(exposed) < 5:
             return []
         trusted = bool(baseline is not None and baseline.is_trusted(device))
         if trusted and len(remote_exposed) < 3:
@@ -562,7 +563,7 @@ class HomeGuardDetectionEngine:
                     "ip": device.ip,
                     "open_ports": device.open_ports,
                     "remote_admin_ports": remote_exposed,
-                    "suspicious_ports": suspicious_exposed,
+                    "unusual_ports": unusual_exposed,
                     "service_cluster_ports": exposed,
                     "trusted": trusted,
                 },
@@ -572,32 +573,34 @@ class HomeGuardDetectionEngine:
     def _detect_possible_malware_service(
         self, rule: DetectionRule, device: Device, _baseline: BaselineStore | None
     ) -> list[Finding]:
-        suspicious = sorted(set(device.open_ports) & SUSPICIOUS_MALWARE_PORTS)
-        if not suspicious:
+        unusual = sorted(set(device.open_ports) & UNUSUAL_SERVICE_PORTS)
+        if not unusual:
             return []
         name = device.hostname or device.vendor or device.ip
         return [
             self._mk(
                 rule_id=rule.rule_id,
-                title=f"Suspicious backdoor or malware-style port on {name}",
+                title=f"Unusual service requiring review on {name}",
                 severity=rule.severity,
                 confidence=rule.confidence,
                 category=rule.category,
                 device=device,
                 plain_english=(
-                    f"{name} has port(s) {', '.join(str(port) for port in suspicious)} reachable. "
-                    "These ports can be used by legitimate labs or developer tools, but they are unusual on normal "
-                    "home devices and are also associated with remote shells, debug bridges, bot channels, or backdoor tools."
+                    f"{name} has port(s) {', '.join(str(port) for port in unusual)} reachable. "
+                    "A port-only scan cannot prove compromise: these ports may belong to lab tools, developer services, "
+                    "debug bridges, or IRC-style services. They are still uncommon on typical home devices and should be "
+                    "reviewed if you did not intentionally enable them."
                 ),
                 recommended_actions=[
                     "Identify the device and confirm whether you intentionally run this service.",
-                    "Disconnect or block the device if nobody recognizes the service.",
-                    "Run a trusted endpoint antivirus scan on the device itself.",
-                    "Change passwords from a clean device if you suspect compromise.",
+                    "Disable the service if it is not needed or move it to an isolated lab network.",
+                    "Check the device owner, firmware, and admin credentials if the service is unexpected.",
+                    "Use endpoint security tools on the device itself when the owner cannot explain the service.",
                 ],
                 evidence={
                     "ip": device.ip,
-                    "suspicious_ports": suspicious,
+                    "unusual_ports": unusual,
+                    "evidence_note": "Port-only indicator; this may be normal for lab, developer, or debug setups.",
                     "open_ports": device.open_ports,
                 },
             )
