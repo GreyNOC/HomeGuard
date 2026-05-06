@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "homeguard"
 version = "1.0.2"
-description = "Consumer-friendly home network security suite: scans devices, tracks trust/quarantine, updates CVE/KEV intelligence, and produces HomeGuard reports."
+description = "Home network security indicator scanner, inventory, and risk-review tool with CVE/KEV hints and HomeGuard reports."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "GreyNOC" }]
 license = "MIT"
-keywords = ["cybersecurity", "home-network", "soc", "network-discovery", "security-report", "antivirus"]
+keywords = ["cybersecurity", "home-network", "soc", "network-discovery", "security-report", "network-inventory"]
 classifiers = [
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Environment :: X11 Applications",
   "Intended Audience :: End Users/Desktop",
@@ -31,6 +31,7 @@ tray = ["pystray>=0.19", "pillow>=10.0"]
 mobile = ["kivy>=2.3"]
 
 [project.scripts]
+GNHL = "greynoc_homeguard.cli:main"
 homeguard = "greynoc_homeguard.cli:main"
 
 [tool.setuptools.packages.find]

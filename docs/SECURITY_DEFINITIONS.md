@@ -1,6 +1,6 @@
 # Security Definitions
 
-HomeGuard now behaves more like a lightweight antivirus-style app. It keeps a local security-definition database in the user's app-data folder instead of making the user choose internal files.
+HomeGuard keeps a local security-definition database in the user's app-data folder instead of making the user choose internal files. Findings are review indicators, not proof that a device is compromised.
 
 Stored data includes:
 
@@ -40,9 +40,9 @@ The GUI has a Protection Center with an Update Definitions button. Baseline sele
 ## CLI workflow
 
 ```bash
-homeguard definitions-status
-homeguard update-definitions --nvd-days 30
-homeguard scan
+GNHL --definitions-status
+GNHL --update-definitions --nvd-days 30
+GNHL --scan
 ```
 
 ## Notes

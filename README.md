@@ -1,8 +1,8 @@
 # HomeGuard
 
-HomeGuard is a consumer-friendly, antivirus-style home network security app. It scans local devices, checks for risky services, watches for new devices, updates security definitions, compares devices against CVE and known-exploited-vulnerability hints, and explains everything in plain English.
+HomeGuard is a home network security indicator scanner, inventory, and risk-review tool. It scans local devices, checks for risky services, watches for new devices, updates security definitions, compares devices against CVE and known-exploited-vulnerability hints, and explains everything in plain English.
 
-This repo is built as a public home network protection tool with bounded local discovery, detection rules, severity/confidence scoring, alert explanations, and report output.
+This repo is built as a bounded local discovery and review tool with detection rules, severity/confidence scoring, alert explanations, and report output.
 
 ## What it does
 
@@ -11,7 +11,7 @@ This repo is built as a public home network protection tool with bounded local d
 - Windows EXE compiler script with `compile_exe.bat`.
 - System tray background mode with scan/update alerts while HomeGuard keeps running.
 - Optional one-click definition updater with `update_definitions.bat`.
-- Antivirus-style Protection Center in the GUI with three large status cards: Network Protection, Device Trust, and Security Updates.
+- Protection status dashboard in the GUI with three large status cards: Network Protection, Device Trust, and Security Updates.
 - Automatic known-device baseline stored in app data; no baseline folder picker.
 - Security definition updates from:
   - CISA Known Exploited Vulnerabilities catalog
@@ -32,7 +32,7 @@ This repo is built as a public home network protection tool with bounded local d
 - Local browser dashboard using Python's standard library HTTP server.
 - Skippable first-run setup guide for definitions, scan depth, first scan, and device trust review.
 - Possible-intrusion findings for unknown devices with remote-access exposure or clustered admin services.
-- Active scan checks a bounded set of private/local ports for remote-control, unsafe sharing, camera, debug bridge, and unusual backdoor-style indicators.
+- Active scan checks a bounded set of private/local ports for remote-control, unsafe sharing, camera, debug bridge, and other unusual-service indicators.
 - One-click fix option for local findings: HomeGuard can close or reopen inbound TCP ports on the computer running the app using reversible Windows Firewall rules.
 - Unit tests.
 
@@ -47,7 +47,7 @@ HomeGuard is designed for networks you own or are authorized to assess.
 
 By default it uses passive discovery. Active probing is opt-in, limited to private/local networks, and bounded by host count, ports, and timeouts. It does not exploit, brute-force, bypass authentication, capture passwords, or alter devices.
 
-CVE, KEV, possible-intrusion, and possible-malware findings are indicators for review. A home network scan usually cannot prove the exact firmware/software version running on a device, and it is not a replacement for endpoint antivirus on the device itself.
+CVE, KEV, possible-intrusion, unusual-service, and endpoint findings are indicators for review, not proof of compromise. A home network scan usually cannot prove the exact firmware/software version running on a device, and it is not a replacement for full endpoint protection on the device itself.
 
 HomeGuard can only close/reopen ports on the local computer where it is running. For another device on the network, it will guide you to disable the service on that device, block it in the router, or quarantine it in HomeGuard.
 
@@ -66,7 +66,7 @@ Inside the GUI you can:
 - update security definitions
 - run a passive home scan
 - enable an optional bounded active scan
-- view threat/security findings and devices in tables
+- view security indicators and devices in tables
 - open the generated HTML report
 - open the generated PDF report
 - save a copy of the HTML report
@@ -102,8 +102,9 @@ update_definitions.bat
 From CLI:
 
 ```bash
-homeguard update-definitions --nvd-days 30
-homeguard definitions-status
+GNHL --status
+GNHL --update-definitions --nvd-days 30
+GNHL --definitions-status
 ```
 
 Definition data is stored automatically in the user's app-data folder.
@@ -229,7 +230,7 @@ python -m pip install -e ".[tray]"
 ## Launch the desktop GUI manually
 
 ```bash
-homeguard gui
+GNHL --gui
 ```
 
 or:
@@ -240,17 +241,39 @@ python -m greynoc_homeguard gui
 
 ## Scan your home network from CLI
 
+After installing from source, use the normal app command:
+
+```bash
+GNHL --status
+GNHL --scan --active
+```
+
+From this repository checkout without installing first, use the repo-local launcher:
+
+```powershell
+.\GNHL --status
+.\GNHL --scan --active
+```
+
+Command-center overview:
+
+```bash
+GNHL --status
+```
+
 Passive only:
 
 ```bash
-homeguard scan
+GNHL --scan
 ```
 
 Optional active scan of private/local network addresses only:
 
 ```bash
-homeguard scan --active
+GNHL --scan --active
 ```
+
+The older subcommand form still works too, for example `GNHL scan --active`.
 
 Reports are written to the app-data reports folder by default. A scan generates:
 
@@ -269,7 +292,7 @@ manifest.sha256
 After a scan, run:
 
 ```bash
-homeguard dashboard --report out/scan/report.json --port 8765
+GNHL --dashboard --report out/scan/report.json --port 8765
 ```
 
 Open `http://127.0.0.1:8765` in your browser.
@@ -279,7 +302,7 @@ The dashboard serves the report and supports downloads for the PDF, JSON, and CS
 ## Analyze an existing device JSON file
 
 ```bash
-homeguard analyze --input devices.json --out out/imported
+GNHL --analyze --input devices.json --out out/imported
 ```
 
 The input can be either:

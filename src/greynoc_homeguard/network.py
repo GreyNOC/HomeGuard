@@ -122,8 +122,31 @@ def _ip_sort_key(value: str) -> tuple[int, int, int, int]:
     return tuple((parts + [999, 999, 999, 999])[:4])  # type: ignore[return-value]
 
 
-def _host_limit(network: ipaddress.IPv4Network, max_hosts: int) -> list[str]:
-    return [str(host) for index, host in enumerate(network.hosts()) if index < max(0, max_hosts)]
+def _sample_network_hosts(network: ipaddress.IPv4Network, max_hosts: int) -> list[str]:
+    limit = max(0, int(max_hosts))
+    if limit <= 0:
+        return []
+    total_hosts = network.num_addresses if network.prefixlen >= 31 else max(0, network.num_addresses - 2)
+    if total_hosts <= 0:
+        return []
+    if total_hosts <= limit:
+        return [str(host) for host in network.hosts()]
+
+    if limit == 1:
+        offsets = [total_hosts // 2]
+    else:
+        step = (total_hosts - 1) / (limit - 1)
+        offsets = sorted({int(round(index * step)) for index in range(limit)})
+        fill = 0
+        while len(offsets) < limit and fill < total_hosts:
+            if fill not in offsets:
+                offsets.append(fill)
+            fill += 1
+        offsets = sorted(offsets[:limit])
+
+    first_host_offset = 0 if network.prefixlen >= 31 else 1
+    base = int(network.network_address)
+    return [str(ipaddress.ip_address(base + first_host_offset + offset)) for offset in offsets]
 
 
 def parse_arp_table(text: str) -> list[Device]:
@@ -187,6 +210,43 @@ def parse_neighbor_table(text: str) -> list[Device]:
     return sorted(hosts.values(), key=lambda item: _ip_sort_key(item.ip))
 
 
+def parse_netsh_neighbor_table(text: str) -> list[Device]:
+    hosts: dict[str, Device] = {}
+    current_interface = "windows"
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.lower().startswith("interface "):
+            current_interface = stripped.split(":", 1)[-1].strip() or current_interface
+            continue
+        match = re.match(
+            r"(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\s+"
+            r"(?P<mac>(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2})\s+"
+            r"(?P<state>[A-Za-z]+)",
+            stripped,
+        )
+        if not match:
+            continue
+        ip = match.group("ip")
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if address.is_multicast or address.is_unspecified:
+            continue
+        mac = normalize_mac(match.group("mac"))
+        hosts[ip] = Device(
+            ip=ip,
+            mac_address=mac,
+            interface=current_interface,
+            source="netsh_neighbor_table",
+            status=match.group("state").lower(),
+            vendor=vendor_from_mac(mac),
+        )
+    return sorted(hosts.values(), key=lambda item: _ip_sort_key(item.ip))
+
+
 def read_arp_table(config: NetworkSensorConfig | None = None) -> list[Device]:
     config = config or NetworkSensorConfig()
     return parse_arp_table(_run_command(["arp", "-a"], timeout=config.command_timeout_seconds))
@@ -197,7 +257,7 @@ def read_neighbor_table(config: NetworkSensorConfig | None = None) -> list[Devic
     system = platform.system().lower()
     if system == "windows":
         text = _run_command(["netsh", "interface", "ip", "show", "neighbors"], timeout=config.command_timeout_seconds)
-        return parse_arp_table(text)
+        return parse_netsh_neighbor_table(text)
     text = _run_command(["ip", "-4", "neigh", "show"], timeout=config.command_timeout_seconds)
     return parse_neighbor_table(text)
 
@@ -352,13 +412,38 @@ def _active_targets(
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network],
     local_cidrs: list[str],
     config: NetworkSensorConfig,
+    passive_hosts: list[Device] | None = None,
 ) -> list[str]:
     targets: list[str] = []
     seen: set[str] = set()
-    for network in networks:
+
+    for host in passive_hosts or []:
+        ip = str(host.ip or "")
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if address.version != 4 or ip in seen or not active_probe_allowed(ip, local_cidrs, config):
+            continue
+        seen.add(ip)
+        targets.append(ip)
+        if len(targets) >= config.max_hosts_per_scan:
+            return targets
+
+    eligible_networks = [
+        network
+        for network in networks
+        if network.version == 4 and is_private_or_local_network(network)
+    ]
+    for index, network in enumerate(eligible_networks):
         if network.version != 4 or not is_private_or_local_network(network):
             continue
-        for ip in _host_limit(network, config.max_hosts_per_scan - len(targets)):
+        remaining = config.max_hosts_per_scan - len(targets)
+        if remaining <= 0:
+            break
+        networks_left = max(1, len(eligible_networks) - index)
+        sample_count = remaining if networks_left == 1 else max(1, remaining // networks_left)
+        for ip in _sample_network_hosts(network, sample_count):
             if ip in seen or not active_probe_allowed(ip, local_cidrs, config):
                 continue
             seen.add(ip)
@@ -424,14 +509,18 @@ def discover_lan_hosts(config: NetworkSensorConfig | None = None) -> list[Device
     local_cidrs = [interface.cidr for interface in interfaces]
     local_networks = [ipaddress.ip_network(cidr, strict=False) for cidr in local_cidrs]
     hosts = _read_passive_hosts(config)
-    hosts = [
-        host
-        for host in hosts
-        if any(ipaddress.ip_address(host.ip) in network for network in local_networks)
-    ]
+    filtered_hosts: list[Device] = []
+    for host in hosts:
+        try:
+            address = ipaddress.ip_address(host.ip)
+        except ValueError:
+            continue
+        if any(address in network for network in local_networks):
+            filtered_hosts.append(host)
+    hosts = filtered_hosts
 
     if not config.passive_only:
-        targets = _active_targets(local_networks, local_cidrs, config)
+        targets = _active_targets(local_networks, local_cidrs, config, passive_hosts=_merge_hosts(hosts))
         active_results: list[Device] = []
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = []

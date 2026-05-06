@@ -98,6 +98,25 @@ function scrubObject(value) {
   return typeof value === "string" ? scrubText(value) : value;
 }
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function cleanString(value, maxLength = 500) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().slice(0, maxLength);
+}
+
+function clampInteger(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, parsed));
+}
+
 function appDataDir() {
   if (process.env.HOMEGUARD_DATA_DIR) {
     return process.env.HOMEGUARD_DATA_DIR;
@@ -115,14 +134,33 @@ function appDataPath(...parts) {
   return path.join(appDataDir(), ...parts);
 }
 
-function isAllowedAppPath(targetPath) {
+function isPathInside(rootPath, targetPath) {
   if (!targetPath || typeof targetPath !== "string") {
     return false;
   }
-  const root = path.resolve(appDataDir());
+  const root = path.resolve(rootPath);
   const target = path.resolve(targetPath);
   const relative = path.relative(root, target);
   return Boolean(relative && !relative.startsWith("..") && !path.isAbsolute(relative)) || target === root;
+}
+
+function isAllowedReportOrLogPath(targetPath, options = {}) {
+  if (!targetPath || typeof targetPath !== "string") {
+    return false;
+  }
+  const target = path.resolve(targetPath);
+  const allowedRoot = [appDataPath("reports"), appDataPath("logs")].some((root) => isPathInside(root, target));
+  if (!allowedRoot) {
+    return false;
+  }
+  if (options.allowDirectory) {
+    return true;
+  }
+  try {
+    return fs.existsSync(target) && fs.statSync(target).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function safePathLabel(targetPath, fallback = "local file") {
@@ -336,11 +374,15 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
   mainWindow = window;
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => {
+    event.preventDefault();
+  });
   window.loadFile(path.join(__dirname, "renderer", "index.html"));
   ensureTray();
   window.on("minimize", (event) => {
@@ -543,11 +585,12 @@ function ensureTray() {
 }
 
 ipcMain.handle("homeguard:scan", async (event, options = {}) => {
+  options = isPlainObject(options) ? options : {};
   const args = ["scan"];
-  if (options.active) {
+  if (options.active === true) {
     args.push("--active");
   }
-  if (options.probeAll) {
+  if (options.probeAll === true) {
     args.push("--probe-all");
   }
   let progressBuffer = "";
@@ -556,7 +599,7 @@ ipcMain.handle("homeguard:scan", async (event, options = {}) => {
     const lines = progressBuffer.split(/\r?\n/);
     progressBuffer = lines.pop() || "";
     for (const line of lines) {
-      const match = line.match(/^\s*\[progress\]\s*(.+?)\s*$/);
+      const match = line.match(/^\s*\[(?:progress|scan)\]\s*(.+?)\s*$/);
       if (match) {
         event.sender.send("homeguard:scan-progress", { message: scrubText(match[1]) });
       }
@@ -572,8 +615,9 @@ ipcMain.handle("homeguard:scan", async (event, options = {}) => {
 });
 
 ipcMain.handle("homeguard:scan-indicator", async (_event, state = {}) => {
+  state = isPlainObject(state) ? state : {};
   setScanIndicatorState({
-    activeRequested: Boolean(state.activeRequested),
+    activeRequested: state.activeRequested === true,
     scanning: scanIndicatorState.scanning,
   });
   return { ok: true, active: isScanIndicatorActive(), ...scanIndicatorState };
@@ -613,11 +657,12 @@ ipcMain.handle("homeguard:schedule", async () => {
 });
 
 ipcMain.handle("homeguard:device-trust", async (_event, fingerprint, trust) => {
-  const cleanTrust = String(trust || "").toLowerCase();
+  const cleanTrust = cleanString(trust, 32).toLowerCase();
   if (!["trusted", "unknown", "quarantined"].includes(cleanTrust)) {
     return { ok: false, message: "Invalid trust value." };
   }
-  const ok = updateDeviceRecord(String(fingerprint || ""), (record) => {
+  const cleanFingerprint = cleanString(fingerprint, 160);
+  const ok = updateDeviceRecord(cleanFingerprint, (record) => {
     record.trust = cleanTrust;
     record.trust_updated_at = utcNow();
   });
@@ -625,14 +670,16 @@ ipcMain.handle("homeguard:device-trust", async (_event, fingerprint, trust) => {
 });
 
 ipcMain.handle("homeguard:device-label", async (_event, fingerprint, label = {}) => {
+  label = isPlainObject(label) ? label : {};
   const owners = new Set(["parent", "child", "guest", "unknown"]);
   const types = new Set(["phone", "laptop", "tv", "console", "iot", "router", "camera", "nas", "printer", "unknown"]);
-  const ok = updateDeviceRecord(String(fingerprint || ""), (record) => {
-    const owner = String(label.owner || record.owner || "unknown").toLowerCase().trim();
-    const deviceType = String(label.device_type || record.device_type || "unknown").toLowerCase().trim();
+  const cleanFingerprint = cleanString(fingerprint, 160);
+  const ok = updateDeviceRecord(cleanFingerprint, (record) => {
+    const owner = cleanString(label.owner || record.owner || "unknown", 40).toLowerCase();
+    const deviceType = cleanString(label.device_type || record.device_type || "unknown", 40).toLowerCase();
     record.owner = owners.has(owner) ? owner : "unknown";
     record.device_type = types.has(deviceType) ? deviceType : "unknown";
-    record.notes = String(label.notes ?? record.notes ?? "").slice(0, 500);
+    record.notes = cleanString(label.notes ?? record.notes ?? "", 500);
     record.labels_updated_at = utcNow();
   });
   return { ok, message: ok ? "Updated device label." : "Select a device first.", devices: sortedDeviceRows() };
@@ -642,7 +689,7 @@ ipcMain.handle("homeguard:device-remove", async (_event, fingerprint) => {
   const filePath = baselinePath();
   const baseline = readJson(filePath, { schema_version: "2.0", devices: {} });
   baseline.devices = baseline.devices && typeof baseline.devices === "object" ? baseline.devices : {};
-  const key = String(fingerprint || "");
+  const key = cleanString(fingerprint, 160);
   const ok = Boolean(key && baseline.devices[key]);
   if (ok) {
     delete baseline.devices[key];
@@ -657,7 +704,7 @@ ipcMain.handle("homeguard:history-state", async () => {
 });
 
 ipcMain.handle("homeguard:history-retention", async (_event, retention) => {
-  const value = Math.max(1, Number.parseInt(String(retention), 10) || 30);
+  const value = clampInteger(retention, 30, 1, 365);
   const filePath = historyPath();
   const payload = readJson(filePath, { schema_version: "1.0", entries: [] });
   payload.retention = value;
@@ -668,15 +715,17 @@ ipcMain.handle("homeguard:history-retention", async (_event, retention) => {
 });
 
 ipcMain.handle("homeguard:schedule-save", async (_event, schedule = {}) => {
-  const interval = ["daily", "hourly", "weekly"].includes(String(schedule.interval || "").toLowerCase())
-    ? String(schedule.interval).toLowerCase()
+  schedule = isPlainObject(schedule) ? schedule : {};
+  const requestedInterval = cleanString(schedule.interval, 20).toLowerCase();
+  const interval = ["daily", "hourly", "weekly"].includes(requestedInterval)
+    ? requestedInterval
     : "daily";
   const payload = {
-    enabled: Boolean(schedule.enabled),
+    enabled: schedule.enabled === true,
     interval,
-    last_run: String(schedule.last_run || scheduleState().last_run || ""),
-    next_run: Boolean(schedule.enabled) ? nextRun(interval) : "",
-    background_monitor: Boolean(schedule.background_monitor),
+    last_run: cleanString(schedule.last_run || scheduleState().last_run || "", 80),
+    next_run: schedule.enabled === true ? nextRun(interval) : "",
+    background_monitor: schedule.background_monitor === true,
   };
   writeJson(schedulePath(), payload);
   return {
@@ -700,6 +749,9 @@ ipcMain.handle("homeguard:log-state", async () => {
 ipcMain.handle("homeguard:logs-folder", async () => {
   const logsPath = path.join(appDataDir(), "logs");
   fs.mkdirSync(logsPath, { recursive: true });
+  if (!isAllowedReportOrLogPath(logsPath, { allowDirectory: true })) {
+    return { ok: false, message: "The logs folder is outside the HomeGuard report/log area." };
+  }
   const message = await shell.openPath(logsPath);
   return { ok: !message, message: scrubText(message), stdout: "Opened the local logs folder." };
 });
@@ -709,6 +761,7 @@ ipcMain.handle("homeguard:window-action", async (event, action) => {
   if (!window) {
     return { ok: false };
   }
+  action = cleanString(action, 40);
   if (action === "minimize") {
     hideWindowToTray(window);
     return { ok: true };
@@ -735,19 +788,24 @@ ipcMain.handle("homeguard:minimize-to-tray", async (event) => {
 });
 
 ipcMain.handle("homeguard:save-html-as", async (event, htmlPath) => {
-  if (!htmlPath || typeof htmlPath !== "string" || !isAllowedAppPath(htmlPath) || !fs.existsSync(htmlPath)) {
+  const sourcePath = cleanString(htmlPath, 1000);
+  if (
+    !sourcePath ||
+    !isAllowedReportOrLogPath(sourcePath) ||
+    path.extname(sourcePath).toLowerCase() !== ".html"
+  ) {
     return { ok: false, message: "No HTML report is available yet." };
   }
   const window = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showSaveDialog(window || undefined, {
     title: "Save HomeGuard HTML Report",
-    defaultPath: path.basename(htmlPath),
+    defaultPath: path.basename(sourcePath),
     filters: [{ name: "HTML Report", extensions: ["html"] }],
   });
   if (result.canceled || !result.filePath) {
     return { ok: false, canceled: true };
   }
-  fs.copyFileSync(htmlPath, result.filePath);
+  fs.copyFileSync(sourcePath, result.filePath);
   return { ok: true, label: safePathLabel(result.filePath, "HTML report") };
 });
 
@@ -779,18 +837,20 @@ ipcMain.handle("homeguard:admin-access", async () => {
 });
 
 ipcMain.handle("homeguard:open-path", async (_event, targetPath) => {
-  if (!targetPath || typeof targetPath !== "string" || !isAllowedAppPath(targetPath)) {
-    return { ok: false, message: "This file is outside the HomeGuard app data area." };
+  const safeTarget = cleanString(targetPath, 1000);
+  if (!safeTarget || !isAllowedReportOrLogPath(safeTarget, { allowDirectory: true })) {
+    return { ok: false, message: "This path is outside the HomeGuard report/log area." };
   }
-  const message = await shell.openPath(targetPath);
+  const message = await shell.openPath(path.resolve(safeTarget));
   return { ok: !message, message: scrubText(message) };
 });
 
 ipcMain.handle("homeguard:show-item", async (_event, targetPath) => {
-  if (!targetPath || typeof targetPath !== "string" || !isAllowedAppPath(targetPath)) {
+  const safeTarget = cleanString(targetPath, 1000);
+  if (!safeTarget || !isAllowedReportOrLogPath(safeTarget)) {
     return { ok: false };
   }
-  shell.showItemInFolder(targetPath);
+  shell.showItemInFolder(path.resolve(safeTarget));
   return { ok: true };
 });
 

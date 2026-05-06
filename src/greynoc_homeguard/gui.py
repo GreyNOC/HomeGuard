@@ -1,6 +1,6 @@
 """HomeGuard desktop GUI.
 
-Antivirus-style protection center built on Tkinter (no external deps required).
+Security-indicator protection center built on Tkinter (no external deps required).
 The GUI surfaces three protection status cards, scan history, scheduled scans,
 the device trust list (trust / quarantine / remove / family labels), and a
 logs viewer.
@@ -852,7 +852,7 @@ class HomeGuardGui:
         self.hero.delete("all")
         width = max(1, self.hero.winfo_width())
         height = 140
-        # blue gradient header (consumer/antivirus feel)
+        # blue gradient header for the local status dashboard
         start = (5, 11, 24)
         mid = (15, 42, 104)
         end = (23, 78, 166)
@@ -872,7 +872,7 @@ class HomeGuardGui:
         self.hero.create_rectangle(28, 28, 86, 86, outline="#BFE7FF", width=1)
         self.hero.create_text(57, 57, text="GN", fill="white", font=("Segoe UI", 18, "bold"))
         self.hero.create_text(102, 30, text="GreyNOC", fill="white", anchor="nw", font=("Segoe UI", 30, "bold"))
-        self.hero.create_text(104, 74, text="HomeGuard | Consumer Network Protection", fill="#DBEAFE", anchor="nw", font=("Segoe UI", 12))
+        self.hero.create_text(104, 74, text="HomeGuard | Home Network Risk Review", fill="#DBEAFE", anchor="nw", font=("Segoe UI", 12))
         self.hero.create_text(width - 28, 38, text=self.network_card_value.get(), fill="white", anchor="ne", font=("Segoe UI", 14, "bold"))
         self.hero.create_text(width - 28, 70, text=self.network_card_detail.get()[:80], fill="#DBEAFE", anchor="ne", font=("Segoe UI", 9))
         self.hero.create_text(width - 28, 100, text=self._updates_value(), fill="white", anchor="ne", font=("Segoe UI", 10, "bold"))

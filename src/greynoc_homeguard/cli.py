@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +25,231 @@ from .history import ProtectionHistory
 from .logging_setup import setup_logging
 from .models import Device
 from .network import NetworkSensorConfig, detect_local_interfaces, discover_lan_hosts
-from .paths import default_baseline_path, default_output_dir, ensure_app_dirs
+from .paths import default_baseline_path, default_output_dir, ensure_app_dirs, user_data_dir
 from .reports import export_report
 from .scan_runner import run_full_scan
 from .scheduler import INTERVAL_VALUES, ScheduleManager
+
+
+_COLOR = False
+_RESET = "\033[0m"
+_PALETTE = {
+    "blue": "\033[38;5;39m",
+    "cyan": "\033[38;5;45m",
+    "green": "\033[38;5;82m",
+    "muted": "\033[38;5;245m",
+    "red": "\033[38;5;203m",
+    "yellow": "\033[38;5;220m",
+    "bold": "\033[1m",
+}
+_SEVERITY_COLOR = {
+    "critical": "red",
+    "high": "red",
+    "medium": "yellow",
+    "low": "cyan",
+    "info": "muted",
+}
+_RISK_COLOR = {
+    "critical": "red",
+    "high": "red",
+    "medium": "yellow",
+    "low": "cyan",
+    "clean": "green",
+    "unknown": "muted",
+}
+_BANNER = r"""
+        /\                 HOME GUARD
+       /  \          GNHL Direct App CLI
+      / () \         Network Review Ready
+     /______\        No npm wrapper required
+"""
+_APP_STYLE_COMMANDS = {
+    "--status": "status",
+    "--scan": "scan",
+    "--update-definitions": "update-definitions",
+    "--definitions-status": "definitions-status",
+    "--dashboard": "dashboard",
+    "--analyze": "analyze",
+    "--gui": "gui",
+    "--tray": "tray",
+    "--history": "history",
+    "--schedule": "schedule",
+    "--devices": "devices",
+}
+_COMMAND_NAMES = set(_APP_STYLE_COMMANDS.values())
+_GLOBAL_OPTIONS_WITH_VALUE = {"--color"}
+
+
+class HomeGuardHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    def _format_action_invocation(self, action: argparse.Action) -> str:
+        if not action.option_strings:
+            return super()._format_action_invocation(action)
+        opts = ", ".join(action.option_strings)
+        if action.nargs == 0:
+            return opts
+        metavar = self._format_args(action, self._get_default_metavar_for_optional(action))
+        return f"{opts} {metavar}"
+
+
+def _terminal_width() -> int:
+    return max(72, min(120, shutil.get_terminal_size((96, 24)).columns))
+
+
+def _configure_color(mode: str) -> None:
+    global _COLOR
+    if mode == "always":
+        _COLOR = True
+        return
+    if mode == "never" or os.environ.get("NO_COLOR"):
+        _COLOR = False
+        return
+    if os.environ.get("FORCE_COLOR"):
+        _COLOR = True
+        return
+    _COLOR = bool(getattr(sys.stdout, "isatty", lambda: False)()) and os.environ.get("TERM") != "dumb"
+
+
+def _style(text: object, *names: str) -> str:
+    value = str(text)
+    if not _COLOR:
+        return value
+    codes = "".join(_PALETTE[name] for name in names if name in _PALETTE)
+    return f"{codes}{value}{_RESET}" if codes else value
+
+
+def _badge(value: object, palette: dict[str, str] | None = None) -> str:
+    text = str(value or "-")
+    color = (palette or {}).get(text.lower(), "muted")
+    return _style(text.upper(), "bold", color)
+
+
+def _muted(text: object) -> str:
+    return _style(text, "muted")
+
+
+def _command_base() -> str:
+    launcher = os.environ.get("GNHL_LAUNCHER", "").lower()
+    if launcher == "npm":
+        return "npm run cli --"
+    if launcher == "repo":
+        return ".\\GNHL" if os.name == "nt" else "./GNHL"
+    return "GNHL"
+
+
+def _command(args: str = "") -> str:
+    base = _command_base()
+    return f"{base} {args}".strip()
+
+
+def _has_explicit_subcommand(argv: list[str]) -> bool:
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            return False
+        if token in _APP_STYLE_COMMANDS:
+            return False
+        if token in _GLOBAL_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if any(token.startswith(f"{option}=") for option in _GLOBAL_OPTIONS_WITH_VALUE):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return token in _COMMAND_NAMES
+    return False
+
+
+def _normalize_app_style_args(argv: list[str]) -> list[str]:
+    if _has_explicit_subcommand(argv):
+        return argv
+    for index, token in enumerate(argv):
+        command = _APP_STYLE_COMMANDS.get(token)
+        if command is not None:
+            return [*argv[:index], command, *argv[index + 1 :]]
+    return argv
+
+
+def _rule(title: str = "") -> None:
+    width = _terminal_width()
+    if title:
+        title = f" {title} "
+        side = max(2, (width - len(title)) // 2)
+        print(_style("=" * side + title + "=" * max(2, width - side - len(title)), "muted"))
+    else:
+        print(_style("=" * width, "muted"))
+
+
+def _wrap(value: object, width: int) -> list[str]:
+    text = str(value if value is not None else "-")
+    lines = textwrap.wrap(text, width=max(8, width), replace_whitespace=False) or [""]
+    return lines
+
+
+def _panel(title: str, rows: list[tuple[str, object]], *, accent: str = "cyan") -> None:
+    key_width = max([len(key) for key, _value in rows] + [8])
+    print(_style(f"\n[{title}]", "bold", accent))
+    for key, value in rows:
+        print(f"  {_muted(key.ljust(key_width))}  {value}")
+
+
+def _clip(value: object, width: int) -> str:
+    text = str(value if value is not None else "-")
+    if len(text) <= width:
+        return text
+    return text[: max(0, width - 3)] + "..."
+
+
+def _table(headers: list[str], rows: list[list[object]], *, max_cell: int = 34) -> None:
+    if not rows:
+        print(_muted("  No rows."))
+        return
+    widths: list[int] = []
+    for index, header in enumerate(headers):
+        values = [str(row[index] if index < len(row) else "") for row in rows]
+        widths.append(min(max_cell, max(len(header), *(len(value) for value in values))))
+    header_line = "  " + "  ".join(_style(header.ljust(widths[index]), "bold", "cyan") for index, header in enumerate(headers))
+    print(header_line)
+    print(_muted("  " + "  ".join("-" * width for width in widths)))
+    for row in rows:
+        cells = []
+        for index, width in enumerate(widths):
+            value = row[index] if index < len(row) else ""
+            cells.append(_clip(value, width).ljust(width))
+        print("  " + "  ".join(cells))
+
+
+def _ok(message: str) -> None:
+    print(f"{_style('[ok]', 'bold', 'green')} {message}")
+
+
+def _warn(message: str) -> None:
+    print(f"{_style('[!]', 'bold', 'yellow')} {message}")
+
+
+def _section_title(title: str) -> None:
+    print(_style(f"\n{title}", "bold", "blue"))
+
+
+def _welcome(_parser: argparse.ArgumentParser) -> None:
+    print(_style(_BANNER.rstrip(), "bold", "cyan"))
+    print(_style("GNHL command center", "bold"))
+    print(_muted("Direct app commands are ready. Use --scan, --status, and friends."))
+    _panel(
+        "App Commands",
+        [
+            ("scan", _command("--scan --active")),
+            ("status", _command("--status")),
+            ("devices", _command("--devices list")),
+            ("dashboard", _command("--dashboard --report <report.json>")),
+        ],
+    )
+    print()
+    print(_muted(f"Subcommands still work too, for example `{_command('scan --active')}`."))
+    print()
+    print(_muted(f"Run `{_command('--help')}` for every command and option."))
 
 
 def _parse_ports(value: str) -> list[int]:
@@ -53,15 +277,16 @@ def _load_devices(path: str | Path) -> list[Device]:
 
 
 def _print_paths(paths: dict[str, Path]) -> None:
-    print("HomeGuard report written:")
-    for key, path in paths.items():
-        print(f"  {key:13s} {path}")
+    rows = [[key, path] for key, path in paths.items()]
+    _section_title("Report Outputs")
+    _table(["artifact", "path"], rows, max_cell=72)
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
     def progress(message: str) -> None:
-        print(f"[progress] {message}", flush=True)
+        print(f"{_style('[scan]', 'bold', 'cyan')} {message}", flush=True)
 
+    _rule("HomeGuard Scan")
     if args.out:
         report, paths, _entry = run_full_scan(
             active=args.active,
@@ -78,8 +303,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
             progress=progress,
         )
     _print_paths(paths)
-    print(f"  overall_risk  {report.overall_risk}")
-    print(f"  overall_score {report.overall_score}")
+    _panel(
+        "Scan Summary",
+        [
+            ("risk", _badge(report.overall_risk, _RISK_COLOR)),
+            ("score", f"{report.overall_score:.1f}"),
+            ("devices", len(report.devices)),
+            ("findings", len(report.findings)),
+            ("report_id", report.report_id),
+        ],
+        accent="green" if str(report.overall_risk).lower() == "clean" else "yellow",
+    )
     return 0
 
 
@@ -107,35 +341,49 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
 
 def cmd_update_definitions(args: argparse.Namespace) -> int:
+    _rule("Definition Update")
     status = DefinitionManager().update_from_sources(nvd_days=args.nvd_days)
-    print("HomeGuard security definitions updated:")
-    print(f"  version       : {status.get('definitions_version')}")
-    print(f"  last_updated  : {status.get('last_updated') or status.get('updated_at')}")
-    print(f"  update_status : {status.get('update_status')}")
-    print(f"  record_count  : {status.get('record_count')}")
-    print(f"  CISA KEV      : {status.get('kev_count')}")
-    print(f"  recent NVD    : {status.get('recent_cve_count')}")
+    _panel(
+        "Security Definitions",
+        [
+            ("version", status.get("definitions_version")),
+            ("updated", status.get("last_updated") or status.get("updated_at")),
+            ("status", _badge(status.get("update_status"), {"current": "green", "update_available": "yellow", "update_failed": "red"})),
+            ("records", status.get("record_count")),
+            ("CISA KEV", status.get("kev_count")),
+            ("recent NVD", status.get("recent_cve_count")),
+        ],
+    )
+    source_rows = []
     for source, details in (status.get("source_status") or {}).items():
         if isinstance(details, dict):
-            state = "ok" if details.get("ok") else "problem"
-            print(f"  {source}: {state} - {details.get('message')}")
+            state = _badge("ok" if details.get("ok") else "problem", {"ok": "green", "problem": "red"})
+            source_rows.append([source, state, details.get("message")])
+    if source_rows:
+        _section_title("Sources")
+        _table(["source", "state", "message"], source_rows, max_cell=58)
     return 0
 
 
 def cmd_definitions_status(_args: argparse.Namespace) -> int:
     status = DefinitionManager().status()
-    print("HomeGuard security definitions:")
-    print(f"  path          : {status.get('path')}")
-    print(f"  version       : {status.get('definitions_version')}")
-    print(f"  last_updated  : {status.get('last_updated') or status.get('updated_at')}")
-    print(f"  update_status : {status.get('update_status')}")
-    print(f"  age_days      : {status.get('age_days')}")
-    print(f"  record_count  : {status.get('record_count')}")
-    print(f"  CISA KEV      : {status.get('kev_count')}")
-    print(f"  recent NVD    : {status.get('recent_cve_count')}")
+    _panel(
+        "Security Definitions",
+        [
+            ("status", _badge(status.get("update_status"), {"current": "green", "update_available": "yellow", "update_failed": "red", "never_updated": "yellow"})),
+            ("version", status.get("definitions_version")),
+            ("updated", status.get("last_updated") or status.get("updated_at")),
+            ("age_days", status.get("age_days")),
+            ("records", status.get("record_count")),
+            ("CISA KEV", status.get("kev_count")),
+            ("recent NVD", status.get("recent_cve_count")),
+            ("path", status.get("path")),
+        ],
+    )
     feed_versions = status.get("feed_versions") or {}
-    for source, version in feed_versions.items():
-        print(f"  feed[{source}]: {version}")
+    if feed_versions:
+        _section_title("Feeds")
+        _table(["feed", "version"], [[source, version] for source, version in feed_versions.items()])
     return 0
 
 
@@ -159,12 +407,16 @@ def cmd_tray(_args: argparse.Namespace) -> int:
 
 def cmd_schedule_show(_args: argparse.Namespace) -> int:
     cfg = ScheduleManager().load()
-    print("HomeGuard schedule:")
-    print(f"  enabled            : {cfg.enabled}")
-    print(f"  interval           : {cfg.interval}")
-    print(f"  background_monitor : {cfg.background_monitor}")
-    print(f"  last_run           : {cfg.last_run or 'never'}")
-    print(f"  next_run           : {cfg.next_run or '-'}")
+    _panel(
+        "Schedule",
+        [
+            ("enabled", _badge("on" if cfg.enabled else "off", {"on": "green", "off": "muted"})),
+            ("interval", cfg.interval),
+            ("background", _badge("on" if cfg.background_monitor else "off", {"on": "green", "off": "muted"})),
+            ("last_run", cfg.last_run or "never"),
+            ("next_run", cfg.next_run or "-"),
+        ],
+    )
     return 0
 
 
@@ -183,9 +435,15 @@ def cmd_schedule_set(args: argparse.Namespace) -> int:
         background = False
     interval = args.interval
     cfg = manager.set(enabled=enabled, interval=interval, background_monitor=background)
-    print(
-        f"Schedule saved: enabled={cfg.enabled}, interval={cfg.interval}, "
-        f"background_monitor={cfg.background_monitor}, next_run={cfg.next_run or '-'}"
+    _ok("Schedule saved.")
+    _panel(
+        "Schedule",
+        [
+            ("enabled", _badge("on" if cfg.enabled else "off", {"on": "green", "off": "muted"})),
+            ("interval", cfg.interval),
+            ("background", _badge("on" if cfg.background_monitor else "off", {"on": "green", "off": "muted"})),
+            ("next_run", cfg.next_run or "-"),
+        ],
     )
     return 0
 
@@ -194,14 +452,23 @@ def cmd_history(args: argparse.Namespace) -> int:
     history = ProtectionHistory().load()
     entries = history.entries()
     if not entries:
-        print("No scans yet.")
+        _warn(f"No scans yet. Run `{_command('--scan')}` to create your first report.")
         return 0
+    _section_title("Recent Scans")
+    rows = []
     for entry in entries[: args.limit]:
-        print(
-            f"{entry.created_at} | risk={entry.overall_risk} score={entry.overall_score} "
-            f"devices={entry.device_count} findings={entry.finding_count} "
-            f"highest={entry.highest_severity} html={entry.html_path}"
+        rows.append(
+            [
+                entry.created_at,
+                _badge(entry.overall_risk, _RISK_COLOR),
+                f"{entry.overall_score:.1f}",
+                entry.device_count,
+                entry.finding_count,
+                _badge(entry.highest_severity, _SEVERITY_COLOR),
+                entry.html_path,
+            ]
         )
+    _table(["created", "risk", "score", "devices", "findings", "highest", "html"], rows, max_cell=42)
     return 0
 
 
@@ -209,15 +476,23 @@ def cmd_devices_list(_args: argparse.Namespace) -> int:
     store = BaselineStore(default_baseline_path()).load()
     rows = store.all_records()
     if not rows:
-        print("No known devices yet. Run a scan to populate the device list.")
+        _warn(f"No known devices yet. Run `{_command('--scan')}` to populate the trust list.")
         return 0
+    table_rows = []
     for row in rows:
-        print(
-            f"{row.get('ip', '-'):<16}  trust={row.get('trust', TRUST_UNKNOWN):<12}  "
-            f"owner={row.get('owner', 'unknown'):<8}  type={row.get('device_type', 'unknown'):<8}  "
-            f"name={row.get('hostname') or row.get('vendor') or '-':<24}  "
-            f"mac={row.get('mac_address') or '-':<17}  fingerprint={row.get('fingerprint', '')}"
+        table_rows.append(
+            [
+                row.get("ip", "-"),
+                _badge(row.get("trust", TRUST_UNKNOWN), {"trusted": "green", "unknown": "yellow", "quarantined": "red"}),
+                row.get("owner", "unknown"),
+                row.get("device_type", "unknown"),
+                row.get("hostname") or row.get("vendor") or "-",
+                row.get("mac_address") or "-",
+                row.get("fingerprint", ""),
+            ]
         )
+    _section_title("Known Devices")
+    _table(["ip", "trust", "owner", "type", "name", "mac", "fingerprint"], table_rows, max_cell=28)
     return 0
 
 
@@ -245,7 +520,7 @@ def cmd_devices_trust(args: argparse.Namespace) -> int:
         print(f"error: failed to set trust for {fingerprint}", file=sys.stderr)
         return 2
     store.save()
-    print(f"Set trust={args.trust} for {fingerprint}")
+    _ok(f"Set trust={args.trust} for {fingerprint}")
     return 0
 
 
@@ -257,7 +532,7 @@ def cmd_devices_label(args: argparse.Namespace) -> int:
         return 2
     store.set_label(fingerprint, owner=args.owner, device_type=args.device_type, notes=args.notes)
     store.save()
-    print(f"Updated labels for {fingerprint}")
+    _ok(f"Updated labels for {fingerprint}")
     return 0
 
 
@@ -269,18 +544,93 @@ def cmd_devices_remove(args: argparse.Namespace) -> int:
         return 2
     if store.remove(fingerprint):
         store.save()
-        print(f"Removed {fingerprint} from known devices.")
+        _ok(f"Removed {fingerprint} from known devices.")
+    return 0
+
+
+def cmd_status(_args: argparse.Namespace) -> int:
+    definitions = DefinitionManager().status()
+    schedule = ScheduleManager().load()
+    store = BaselineStore(default_baseline_path()).load()
+    devices = store.all_records()
+    trusted = sum(1 for row in devices if row.get("trust") == TRUST_TRUSTED)
+    quarantined = sum(1 for row in devices if row.get("trust") == TRUST_QUARANTINED)
+    unknown = max(0, len(devices) - trusted - quarantined)
+    latest = ProtectionHistory().load().latest()
+
+    _rule("Mission Control")
+    _panel(
+        "Protection",
+        [
+            ("known_devices", len(devices)),
+            ("trusted", _style(trusted, "green" if trusted else "muted")),
+            ("unknown", _style(unknown, "yellow" if unknown else "muted")),
+            ("quarantined", _style(quarantined, "red" if quarantined else "muted")),
+            ("data_dir", user_data_dir()),
+        ],
+    )
+    _panel(
+        "Definitions",
+        [
+            ("status", _badge(definitions.get("update_status"), {"current": "green", "update_available": "yellow", "update_failed": "red", "never_updated": "yellow"})),
+            ("version", definitions.get("definitions_version")),
+            ("updated", definitions.get("last_updated") or definitions.get("updated_at") or "never"),
+            ("records", definitions.get("record_count")),
+        ],
+    )
+    _panel(
+        "Schedule",
+        [
+            ("enabled", _badge("on" if schedule.enabled else "off", {"on": "green", "off": "muted"})),
+            ("interval", schedule.interval),
+            ("next_run", schedule.next_run or "-"),
+            ("background", _badge("on" if schedule.background_monitor else "off", {"on": "green", "off": "muted"})),
+        ],
+    )
+    if latest is None:
+        _warn(f"No scan history yet. `{_command('--scan')}` is the best first move.")
+    else:
+        _panel(
+            "Latest Scan",
+            [
+                ("created", latest.created_at),
+                ("risk", _badge(latest.overall_risk, _RISK_COLOR)),
+                ("score", f"{latest.overall_score:.1f}"),
+                ("devices", latest.device_count),
+                ("findings", latest.finding_count),
+                ("html", latest.html_path or "-"),
+            ],
+        )
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="homeguard",
-        description="HomeGuard consumer network protection",
+        prog="GNHL",
+        description=_style(_BANNER.rstrip(), "bold", "cyan") + "\n\nHome Guard network indicator review",
+        epilog=(
+            "App-style runs:\n"
+            f"  {_command('--status')}\n"
+            f"  {_command('--scan --active')}\n"
+            f"  {_command('--devices list')}\n"
+            f"  {_command('--update-definitions --nvd-days 30')}\n\n"
+            "Subcommands still work too, for example: "
+            f"{_command('scan --active')}"
+        ),
+        formatter_class=HomeGuardHelpFormatter,
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Terminal color mode",
+    )
+    sub = parser.add_subparsers(dest="command", metavar="command")
 
-    scan = sub.add_parser("scan", help="Scan the local home network and this PC for endpoint malware indicators")
+    status = sub.add_parser("status", help="Show the Home Guard command-center overview", formatter_class=HomeGuardHelpFormatter)
+    status.set_defaults(func=cmd_status)
+
+    scan = sub.add_parser("scan", help="Scan the local home network and this PC for endpoint security indicators", formatter_class=HomeGuardHelpFormatter)
     scan.add_argument("--out", default="", help="Output directory (default: app data folder)")
     scan.add_argument("--active", action="store_true", help="Enable bounded active ping/TCP checks on private/local networks")
     scan.add_argument("--probe-all", action="store_true", help="Run TCP checks against all bounded active targets, not just passive hosts")
@@ -291,7 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.set_defaults(func=cmd_scan)
 
-    analyze = sub.add_parser("analyze", help="Analyze an existing device JSON file")
+    analyze = sub.add_parser("analyze", help="Analyze an existing device JSON file", formatter_class=HomeGuardHelpFormatter)
     analyze.add_argument("--input", required=True, help="Device JSON input file")
     analyze.add_argument("--out", default=str(default_output_dir() / "analyze"), help="Output directory")
     analyze.add_argument("--baseline", default="", help=argparse.SUPPRESS)
@@ -299,34 +649,34 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--no-update-baseline", action="store_true", help="Do not update trust store after report")
     analyze.set_defaults(func=cmd_analyze)
 
-    update_defs = sub.add_parser("update-definitions", help="Update CVE and security definitions")
+    update_defs = sub.add_parser("update-definitions", help="Update CVE and security definitions", formatter_class=HomeGuardHelpFormatter)
     update_defs.add_argument("--nvd-days", type=int, default=30, help="Number of recent NVD publication days to cache, max 120")
     update_defs.set_defaults(func=cmd_update_definitions)
 
-    defs_status = sub.add_parser("definitions-status", help="Show local security definition status")
+    defs_status = sub.add_parser("definitions-status", help="Show local security definition status", formatter_class=HomeGuardHelpFormatter)
     defs_status.set_defaults(func=cmd_definitions_status)
 
-    dash = sub.add_parser("dashboard", help="Serve a local dashboard for a report JSON")
+    dash = sub.add_parser("dashboard", help="Serve a local dashboard for a report JSON", formatter_class=HomeGuardHelpFormatter)
     dash.add_argument("--report", required=True, help="Path to report.json")
     dash.add_argument("--host", default="127.0.0.1")
     dash.add_argument("--port", type=int, default=8765)
     dash.set_defaults(func=cmd_dashboard)
 
-    gui = sub.add_parser("gui", help="Launch the desktop GUI")
+    gui = sub.add_parser("gui", help="Launch the desktop GUI", formatter_class=HomeGuardHelpFormatter)
     gui.set_defaults(func=cmd_gui)
 
-    tray = sub.add_parser("tray", help="Launch the system tray protection mode")
+    tray = sub.add_parser("tray", help="Launch the system tray protection mode", formatter_class=HomeGuardHelpFormatter)
     tray.set_defaults(func=cmd_tray)
 
-    history = sub.add_parser("history", help="List past protection scans")
+    history = sub.add_parser("history", help="List past protection scans", formatter_class=HomeGuardHelpFormatter)
     history.add_argument("--limit", type=int, default=20)
     history.set_defaults(func=cmd_history)
 
-    schedule = sub.add_parser("schedule", help="Manage scheduled scans")
+    schedule = sub.add_parser("schedule", help="Manage scheduled scans", formatter_class=HomeGuardHelpFormatter)
     schedule_sub = schedule.add_subparsers(dest="schedule_command", required=True)
-    schedule_show = schedule_sub.add_parser("show", help="Show current schedule")
+    schedule_show = schedule_sub.add_parser("show", help="Show current schedule", formatter_class=HomeGuardHelpFormatter)
     schedule_show.set_defaults(func=cmd_schedule_show)
-    schedule_set = schedule_sub.add_parser("set", help="Update schedule settings")
+    schedule_set = schedule_sub.add_parser("set", help="Update schedule settings", formatter_class=HomeGuardHelpFormatter)
     schedule_set.add_argument("--enable", action="store_true", help="Enable scheduled scans")
     schedule_set.add_argument("--disable", action="store_true", help="Disable scheduled scans")
     schedule_set.add_argument(
@@ -338,21 +688,21 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_set.add_argument("--no-background", action="store_true", help="Disable background monitor")
     schedule_set.set_defaults(func=cmd_schedule_set)
 
-    devices = sub.add_parser("devices", help="Manage the device trust list")
+    devices = sub.add_parser("devices", help="Manage the device trust list", formatter_class=HomeGuardHelpFormatter)
     devices_sub = devices.add_subparsers(dest="devices_command", required=True)
-    devices_list = devices_sub.add_parser("list", help="List known devices")
+    devices_list = devices_sub.add_parser("list", help="List known devices", formatter_class=HomeGuardHelpFormatter)
     devices_list.set_defaults(func=cmd_devices_list)
-    devices_trust = devices_sub.add_parser("trust", help="Set trust for a device")
+    devices_trust = devices_sub.add_parser("trust", help="Set trust for a device", formatter_class=HomeGuardHelpFormatter)
     devices_trust.add_argument("device", help="Device IP, MAC, or fingerprint")
     devices_trust.add_argument("trust", choices=sorted(TRUST_VALUES))
     devices_trust.set_defaults(func=cmd_devices_trust)
-    devices_label = devices_sub.add_parser("label", help="Set family/device-type labels for a device")
+    devices_label = devices_sub.add_parser("label", help="Set family/device-type labels for a device", formatter_class=HomeGuardHelpFormatter)
     devices_label.add_argument("device", help="Device IP, MAC, or fingerprint")
     devices_label.add_argument("--owner", choices=sorted(OWNER_VALUES))
     devices_label.add_argument("--device-type", choices=sorted(DEVICE_TYPES))
     devices_label.add_argument("--notes", default=None)
     devices_label.set_defaults(func=cmd_devices_label)
-    devices_remove = devices_sub.add_parser("remove", help="Remove a device from the known list")
+    devices_remove = devices_sub.add_parser("remove", help="Remove a device from the known list", formatter_class=HomeGuardHelpFormatter)
     devices_remove.add_argument("device", help="Device IP, MAC, or fingerprint")
     devices_remove.set_defaults(func=cmd_devices_remove)
 
@@ -362,12 +712,26 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
     ensure_app_dirs()
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if "--color" in raw_argv:
+        index = raw_argv.index("--color")
+        if index + 1 < len(raw_argv):
+            _configure_color(raw_argv[index + 1])
+        else:
+            _configure_color("auto")
+    else:
+        _configure_color("auto")
+    raw_argv = _normalize_app_style_args(raw_argv)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
+    _configure_color(args.color)
+    if not hasattr(args, "func"):
+        _welcome(parser)
+        return 0
     try:
         return int(args.func(args))
     except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"{_style('error:', 'bold', 'red')} {exc}", file=sys.stderr)
         return 2
 
 

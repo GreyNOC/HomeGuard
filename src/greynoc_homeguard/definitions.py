@@ -26,14 +26,14 @@ DEFAULT_RISKY_PORTS = [
     {"port": 139, "service": "NetBIOS", "severity": "medium", "why": "Windows file-sharing services should not be reachable from untrusted devices."},
     {"port": 445, "service": "SMB", "severity": "medium", "why": "SMB file sharing can expose files if permissions are weak."},
     {"port": 554, "service": "RTSP", "severity": "medium", "why": "Camera streaming services can expose video feeds if default passwords are still used."},
-    {"port": 4444, "service": "Suspicious shell listener", "severity": "high", "category": "possible_malware", "why": "Port 4444 is commonly used by test tools, reverse shells, and unauthorized remote-control payloads. It should be investigated if you did not intentionally open it."},
-    {"port": 5555, "service": "ADB or unauthorized debug bridge", "severity": "high", "category": "possible_malware", "why": "Port 5555 is often Android Debug Bridge or a similar debug service. On phones, TVs, and IoT devices it can allow remote control when exposed."},
-    {"port": 6667, "service": "IRC bot/control channel", "severity": "medium", "category": "possible_malware", "why": "Port 6667 is commonly associated with IRC. Some botnets and malware families have used IRC-style command channels."},
+    {"port": 4444, "service": "Unusual shell or lab listener", "severity": "high", "category": "unusual_service", "why": "Port 4444 is common in labs and testing tools, but it is unusual on normal home devices. Review it if you did not intentionally open it."},
+    {"port": 5555, "service": "ADB or debug bridge", "severity": "high", "category": "unusual_service", "why": "Port 5555 is often Android Debug Bridge or a similar debug service. It can be normal for development, but exposed debug access should be confirmed."},
+    {"port": 6667, "service": "IRC-style service", "severity": "medium", "category": "unusual_service", "why": "Port 6667 is commonly associated with IRC-style services. It can be normal, but unexpected listeners should be reviewed."},
     {"port": 8080, "service": "HTTP alternate", "severity": "low", "why": "Alternate web admin ports are common but should be reviewed."},
     {"port": 8443, "service": "HTTPS alternate", "severity": "low", "why": "Alternate web admin ports are common but should be reviewed."},
     {"port": 3389, "service": "Remote Desktop", "severity": "high", "why": "Remote Desktop should be disabled unless you intentionally use it."},
     {"port": 5900, "service": "VNC", "severity": "high", "why": "VNC remote-control services are risky when left open or weakly protected."},
-    {"port": 31337, "service": "Known backdoor-style port", "severity": "high", "category": "possible_malware", "why": "Port 31337 is historically associated with backdoor tools. It is unusual on normal home devices and should be investigated."},
+    {"port": 31337, "service": "Unusual legacy service port", "severity": "high", "category": "unusual_service", "why": "Port 31337 is historically unusual on home devices. A port-only scan cannot prove malicious use, but unexpected exposure should be reviewed."},
 ]
 
 DEFAULT_NAME_HINTS = ["router", "camera", "cam", "admin", "default", "tplink", "tp-link", "dlink", "netgear", "printer", "nas", "synology", "qnap", "arlo", "ring"]

@@ -7,7 +7,7 @@ Thanks for improving HomeGuard.
 ```bash
 python -m pip install -e .
 PYTHONPATH=src python -m unittest discover -s tests -v
-homeguard scan --out out/scan
+GNHL --scan --out out/scan
 ```
 
 ## Pull request guidelines
