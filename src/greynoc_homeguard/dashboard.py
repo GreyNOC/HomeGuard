@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import html
 import ipaddress
 import json
+import secrets
 import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -72,6 +75,31 @@ def _report_from_dict(data: dict[str, Any]) -> HomeGuardReport:
     )
 
 
+def _append_dashboard_token(url: str, token: str) -> str:
+    if not token:
+        return url
+    parts = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("token", token))
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment)
+    )
+
+
+def _add_token_to_report_links(html_text: str, token: str) -> str:
+    if not token:
+        return html_text
+    replacements = {
+        'href="report.pdf"': f'href="{html.escape(_append_dashboard_token("report.pdf", token))}"',
+        'href="report.json"': f'href="{html.escape(_append_dashboard_token("report.json", token))}"',
+        'href="devices.csv"': f'href="{html.escape(_append_dashboard_token("devices.csv", token))}"',
+        'href="findings.csv"': f'href="{html.escape(_append_dashboard_token("findings.csv", token))}"',
+    }
+    for old, new in replacements.items():
+        html_text = html_text.replace(old, new)
+    return html_text
+
+
 def serve_report(
     report_path: str | Path,
     host: str = "127.0.0.1",
@@ -79,7 +107,8 @@ def serve_report(
     *,
     allow_lan: bool = False,
 ) -> None:
-    if not _is_loopback_host(host):
+    bind_is_loopback = _is_loopback_host(host)
+    if not bind_is_loopback:
         if not allow_lan:
             raise ValueError(
                 f"Refusing to bind the HomeGuard dashboard to {host!r} because it is "
@@ -89,14 +118,17 @@ def serve_report(
             )
         print(
             f"WARNING: HomeGuard dashboard is binding to {host} — anyone on your "
-            "local network can read the report. Stop the server (Ctrl+C) when done.",
+            "local network can read the report if they have the session URL. "
+            "Stop the server (Ctrl+C) when done.",
             file=sys.stderr,
             flush=True,
         )
     path = Path(report_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     report = _report_from_dict(data)
-    html_payload = render_html(report).encode("utf-8")
+    auth_token = secrets.token_urlsafe(32) if allow_lan and not bind_is_loopback else ""
+    html_text = _add_token_to_report_links(render_html(report), auth_token)
+    html_payload = html_text.encode("utf-8")
     json_payload = json.dumps(report.as_dict(), indent=2, sort_keys=True).encode("utf-8")
     report_dir = path.parent
 
@@ -114,12 +146,39 @@ def serve_report(
             return None
         return target.read_bytes(), targets[filename]
 
+    def _request_has_valid_token(raw_path: str) -> bool:
+        if not auth_token:
+            return True
+        query = urllib.parse.urlsplit(raw_path).query
+        values = urllib.parse.parse_qs(query).get("token") or []
+        return any(secrets.compare_digest(value, auth_token) for value in values)
+
     class Handler(BaseHTTPRequestHandler):
+        def _send_security_headers(self) -> None:
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+
+        def _reject_unauthorized(self) -> bool:
+            if _request_has_valid_token(self.path):
+                return False
+            body = b"Forbidden: invalid or missing HomeGuard dashboard token."
+            self.send_response(403)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self._send_security_headers()
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
         def do_GET(self) -> None:  # noqa: N802
+            if self._reject_unauthorized():
+                return
             clean_path = self.path.split("?", 1)[0].lstrip("/") or "report.html"
             if clean_path in {"api/report", "report.json"}:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+                self._send_security_headers()
                 self.send_header("Content-Length", str(len(json_payload)))
                 self.end_headers()
                 self.wfile.write(json_payload)
@@ -130,12 +189,14 @@ def serve_report(
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Disposition", f'attachment; filename="{clean_path}"')
+                self._send_security_headers()
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
                 return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self._send_security_headers()
             self.send_header("Content-Length", str(len(html_payload)))
             self.end_headers()
             self.wfile.write(html_payload)
@@ -144,7 +205,10 @@ def serve_report(
             return
 
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"HomeGuard dashboard: http://{host}:{port}")
+    display_url = f"http://{host}:{port}"
+    if auth_token:
+        display_url = _append_dashboard_token(display_url, auth_token)
+    print(f"HomeGuard dashboard: {display_url}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
