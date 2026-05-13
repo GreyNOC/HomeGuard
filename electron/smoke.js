@@ -5,6 +5,7 @@ const { spawnSync } = require("child_process");
 const root = path.resolve(__dirname, "..");
 const required = [
   "package.json",
+  "electron/main.secure.js",
   "electron/main.js",
   "electron/preload.js",
   "electron/renderer/index.html",
@@ -20,8 +21,16 @@ for (const relativePath of required) {
 }
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-if (packageJson.main !== "electron/main.js") {
-  throw new Error("package.json does not point at the Electron main process.");
+if (packageJson.main !== "electron/main.secure.js") {
+  throw new Error("package.json does not point at the secure Electron entrypoint.");
+}
+
+const secureMain = fs.readFileSync(path.join(root, "electron", "main.secure.js"), "utf8");
+if (!secureMain.includes("HOMEGUARD_DEV_MODE") || !secureMain.includes("HOMEGUARD_CORE_EXE") || !secureMain.includes("HOMEGUARD_PYTHON")) {
+  throw new Error("Secure Electron entrypoint is not guarding packaged environment overrides.");
+}
+if (!secureMain.includes('require("./main.js")')) {
+  throw new Error("Secure Electron entrypoint does not load the main process.");
 }
 
 const main = fs.readFileSync(path.join(root, "electron", "main.js"), "utf8");
@@ -173,17 +182,17 @@ for (const candidate of pythonCandidates()) {
     candidate.command,
     [...candidate.prefix, "-m", "greynoc_homeguard", "definitions-status"],
     {
-    cwd: root,
-    env: {
-      ...process.env,
-      PYTHONPATH: [path.join(root, "src"), process.env.PYTHONPATH || ""]
-        .filter(Boolean)
-        .join(path.delimiter),
-      PYTHONDONTWRITEBYTECODE: "1",
+      cwd: root,
+      env: {
+        ...process.env,
+        PYTHONPATH: [path.join(root, "src"), process.env.PYTHONPATH || ""]
+          .filter(Boolean)
+          .join(path.delimiter),
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+      encoding: "utf8",
+      windowsHide: true,
     },
-    encoding: "utf8",
-    windowsHide: true,
-  },
   );
   if (result.status === 0) {
     pythonCheck = result;
