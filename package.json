@@ -4,7 +4,7 @@
   "private": true,
   "description": "Electron frontend for HomeGuard.",
   "author": "GreyNOC",
-  "main": "electron/main.js",
+  "main": "electron/main.secure.js",
   "bin": {
     "GNHL": "scripts/cli.js"
   },
