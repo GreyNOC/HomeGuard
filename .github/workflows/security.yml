@@ -50,16 +50,14 @@ jobs:
           node-version: '20'
           cache: npm
 
+      - name: Refresh lockfile for upgraded Electron tooling
+        run: npm install --package-lock-only
+
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Run production npm audit
-        run: npm audit --omit=dev --audit-level=high
-
-      - name: Report Electron build-tool audit findings
-        continue-on-error: true
+      - name: Run full npm audit
         run: npm audit --audit-level=high
 
       - name: Run Electron smoke test if available
-        continue-on-error: true
         run: npm run smoke --if-present
