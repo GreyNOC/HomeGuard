@@ -28,6 +28,8 @@ Last hardening update: 2026-05-13
 - Dashboard LAN mode now creates a random per-session token and rejects requests without the token.
 - Dashboard responses now include `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`.
 - Dashboard download links include the session token when LAN mode is intentionally enabled.
+- Added `.github/workflows/security.yml` so pull requests and pushes to `main` run Python tests, `pip-audit`, `npm audit --audit-level=high`, the Electron smoke test, and the HomeGuard release security preflight.
+- Added `scripts/security_release_gate.py`, a dependency-free CI preflight that verifies key hardening markers remain present and blocks obvious committed secrets in common text files.
 
 ## Back Door / Remote Control Review
 
@@ -41,5 +43,6 @@ Network calls are limited to user-triggered security definition updates from CIS
 - Run the signed installer build on a clean Windows release machine.
 - Review `npm audit` output at release time because dependency advisories change.
 - Confirm the final installed app launches from `Program Files` without exposing build paths in Windows metadata or installer logs.
-- Generate and commit a package lockfile from a trusted release workstation using `npm install --package-lock-only` or regenerate the full dependency tree with `npm ci` once a lockfile exists.
-- Add CI checks for `npm audit`, `pip-audit`, and IPC path traversal tests before public release.
+- Generate or refresh the package lockfile from a trusted release workstation using exact dependency pins and verify with `npm ci`.
+- Keep the CI security gates required on release branches and before public installer publication.
+- Review imported/offline security definition files before distribution; only import definition bundles from trusted GreyNOC release sources.
