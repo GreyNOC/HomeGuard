@@ -15,6 +15,8 @@ from .baseline import (
     DEVICE_TYPES,
     TRUST_VALUES,
     TRUST_UNKNOWN,
+    TRUST_TRUSTED,
+    TRUST_QUARANTINED,
 )
 from .custom_rules import (
     has_any_rules,

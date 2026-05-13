@@ -14,8 +14,23 @@ if str(SRC) not in sys.path:
 class CliSmokeTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="hg_cli_smoke_")
-        self.addCleanup(self._tmp.cleanup)
         os.environ["HOMEGUARD_DATA_DIR"] = self._tmp.name
+
+    def tearDown(self):
+        import logging
+
+        logger = logging.getLogger("greynoc_homeguard")
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handler.close()
+
+        try:
+            import greynoc_homeguard.logging_setup as logging_setup
+            logging_setup._initialized = False
+        except Exception:
+            pass
+
+        self._tmp.cleanup()
 
     def test_status_command_does_not_crash_on_empty_app_data(self):
         from greynoc_homeguard import cli
