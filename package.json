@@ -21,7 +21,7 @@
     "release:gate": "powershell -ExecutionPolicy Bypass -File scripts/release_gate.ps1"
   },
   "devDependencies": {
-    "electron": "30.5.1",
-    "electron-builder": "24.13.3"
+    "electron": "42.0.1",
+    "electron-builder": "26.0.12"
   }
 }
