@@ -25,6 +25,36 @@ SECRET_PATTERNS = [
     re.compile(r"HOMEGUARD_NVD_API_KEY\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{20,}", re.IGNORECASE),
 ]
 
+PLACEHOLDER_SECRET_VALUES = {
+    "your-certificate-password",
+    "certificate-password",
+    "your-password",
+    "password-placeholder",
+    "example-password",
+    "your-api-key",
+    "api-key-placeholder",
+    "example-api-key",
+    "your-token",
+    "token-placeholder",
+    "example-token",
+    "dummy-token",
+    "dummy-secret",
+    "not-a-real-secret",
+    "test-secret",
+    "test-token",
+    "test-password",
+}
+
+PLACEHOLDER_LINE_MARKERS = (
+    "example",
+    "placeholder",
+    "dummy",
+    "not-a-real",
+    "your-",
+    "<",
+    "...",
+)
+
 TEXT_SUFFIXES = {
     ".bat",
     ".cmd",
@@ -112,15 +142,29 @@ def iter_text_files() -> list[Path]:
     return files
 
 
+def _line_has_placeholder_secret(line: str) -> bool:
+    clean = line.strip().strip("'\"").lower()
+    if not clean:
+        return False
+    if any(value in clean for value in PLACEHOLDER_SECRET_VALUES):
+        return True
+    if any(marker in clean for marker in PLACEHOLDER_LINE_MARKERS):
+        if any(token in clean for token in ("password", "secret", "token", "api_key", "api-key", "nvd_api_key")):
+            return True
+    return False
+
+
 def check_secret_patterns() -> None:
     findings: list[str] = []
     for path in iter_text_files():
         rel = path.relative_to(ROOT)
-        text = read_text(path)
-        for pattern in SECRET_PATTERNS:
-            if pattern.search(text):
-                findings.append(str(rel))
-                break
+        for line_number, line in enumerate(read_text(path).splitlines(), start=1):
+            if _line_has_placeholder_secret(line):
+                continue
+            for pattern in SECRET_PATTERNS:
+                if pattern.search(line):
+                    findings.append(f"{rel}:{line_number}")
+                    break
     if findings:
         fail("Potential committed secret(s) found in: " + ", ".join(sorted(findings)))
     print("[OK] no obvious committed secrets in tracked text files")
