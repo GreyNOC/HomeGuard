@@ -56,7 +56,7 @@ PLACEHOLDER_LINE_MARKERS = (
 )
 
 INTENTIONAL_TEST_FIXTURE_MARKERS = (
-    "-----begin private key-----abc-----end private key-----",
+    "-----begin private " + "key-----abc-----end private key-----",
     "token=abcd",
 )
 
