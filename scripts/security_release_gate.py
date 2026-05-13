@@ -55,6 +55,11 @@ PLACEHOLDER_LINE_MARKERS = (
     "...",
 )
 
+INTENTIONAL_TEST_FIXTURE_MARKERS = (
+    "-----begin private key-----abc-----end private key-----",
+    "token=abcd",
+)
+
 TEXT_SUFFIXES = {
     ".bat",
     ".cmd",
@@ -154,12 +159,25 @@ def _line_has_placeholder_secret(line: str) -> bool:
     return False
 
 
+def _line_is_intentional_test_fixture(path: Path, line: str) -> bool:
+    """Allow explicit redaction-test fixtures without ignoring the whole tests tree."""
+
+    try:
+        rel = path.relative_to(ROOT)
+    except ValueError:
+        return False
+    if not rel.parts or rel.parts[0] != "tests":
+        return False
+    clean = line.lower()
+    return any(marker in clean for marker in INTENTIONAL_TEST_FIXTURE_MARKERS)
+
+
 def check_secret_patterns() -> None:
     findings: list[str] = []
     for path in iter_text_files():
         rel = path.relative_to(ROOT)
         for line_number, line in enumerate(read_text(path).splitlines(), start=1):
-            if _line_has_placeholder_secret(line):
+            if _line_has_placeholder_secret(line) or _line_is_intentional_test_fixture(path, line):
                 continue
             for pattern in SECRET_PATTERNS:
                 if pattern.search(line):
