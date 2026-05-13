@@ -50,12 +50,20 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Set up Python for smoke test
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Run production npm audit
         run: npm audit --omit=dev --audit-level=high
 
       - name: Report Electron build-tool audit findings
         continue-on-error: true
         run: npm audit --audit-level=high
+
+      - name: Install HomeGuard backend for smoke test
+        run: python -m pip install -e .
 
       - name: Run Electron smoke test
         run: npm run smoke --if-present

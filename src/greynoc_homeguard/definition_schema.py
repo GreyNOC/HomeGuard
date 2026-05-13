@@ -98,8 +98,8 @@ def validate_nvd_cve_payload(payload: Any) -> dict[str, Any]:
                 desc_obj = _require_object(desc, f"NVD vulnerability[{index}].cve.descriptions[{desc_index}]")
                 _optional_text(desc_obj.get("lang"), f"NVD vulnerability[{index}].cve.descriptions[{desc_index}].lang", max_length=16)
                 _optional_text(desc_obj.get("value"), f"NVD vulnerability[{index}].cve.descriptions[{desc_index}].value", max_length=MAX_DESCRIPTION)
-        metrics = cve.get("metrics") or {}
-        if metrics and not isinstance(metrics, dict):
+        metrics = cve.get("metrics")
+        if metrics is not None and not isinstance(metrics, dict):
             raise DefinitionSchemaError(f"NVD vulnerability[{index}].cve.metrics must be an object")
     return data
 
