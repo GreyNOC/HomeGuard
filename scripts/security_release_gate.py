@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -135,16 +136,44 @@ def check_required_markers() -> None:
         print(f"[OK] {name}")
 
 
-def iter_text_files() -> list[Path]:
+def _tracked_files() -> list[Path]:
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return []
     files: list[Path] = []
-    for base, dirs, filenames in os.walk(ROOT):
-        dirs[:] = [dirname for dirname in dirs if dirname not in SKIP_DIRS]
-        base_path = Path(base)
-        for filename in filenames:
-            path = base_path / filename
-            if path.suffix.lower() in TEXT_SUFFIXES or path.name in {"GNHL", "Dockerfile"}:
-                files.append(path)
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        rel = Path(raw.decode("utf-8", errors="ignore"))
+        files.append(ROOT / rel)
     return files
+
+
+def iter_text_files() -> list[Path]:
+    tracked = _tracked_files()
+    if tracked:
+        files = tracked
+    else:
+        files = []
+        for base, dirs, filenames in os.walk(ROOT):
+            dirs[:] = [dirname for dirname in dirs if dirname not in SKIP_DIRS]
+            base_path = Path(base)
+            files.extend(base_path / filename for filename in filenames)
+
+    text_files: list[Path] = []
+    for path in files:
+        rel_parts = path.relative_to(ROOT).parts if path.is_relative_to(ROOT) else path.parts
+        if any(part in SKIP_DIRS for part in rel_parts):
+            continue
+        if path.suffix.lower() in TEXT_SUFFIXES or path.name in {"GNHL", "Dockerfile"}:
+            text_files.append(path)
+    return sorted(text_files)
 
 
 def _line_has_placeholder_secret(line: str) -> bool:
