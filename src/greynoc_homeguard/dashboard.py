@@ -126,7 +126,7 @@ def serve_report(
     path = Path(report_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     report = _report_from_dict(data)
-    auth_token = secrets.token_urlsafe(32) if allow_lan and not bind_is_loopback else ""
+    auth_token = secrets.token_urlsafe(32)
     html_text = _add_token_to_report_links(render_html(report), auth_token)
     html_payload = html_text.encode("utf-8")
     json_payload = json.dumps(report.as_dict(), indent=2, sort_keys=True).encode("utf-8")
@@ -147,8 +147,6 @@ def serve_report(
         return target.read_bytes(), targets[filename]
 
     def _request_has_valid_token(raw_path: str) -> bool:
-        if not auth_token:
-            return True
         query = urllib.parse.urlsplit(raw_path).query
         values = urllib.parse.parse_qs(query).get("token") or []
         return any(secrets.compare_digest(value, auth_token) for value in values)
@@ -205,9 +203,7 @@ def serve_report(
             return
 
     server = ThreadingHTTPServer((host, port), Handler)
-    display_url = f"http://{host}:{port}"
-    if auth_token:
-        display_url = _append_dashboard_token(display_url, auth_token)
+    display_url = _append_dashboard_token(f"http://{host}:{port}", auth_token)
     print(f"HomeGuard dashboard: {display_url}")
     print("Press Ctrl+C to stop.")
     try:
