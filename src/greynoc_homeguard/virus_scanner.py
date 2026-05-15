@@ -403,7 +403,7 @@ def scan_downloads(
 def _run_json_powershell(script: str, *, timeout: int = 20) -> Any:
     try:
         result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            ["powershell.exe", "-NoProfile", "-Command", script],
             capture_output=True,
             text=True,
             timeout=timeout,

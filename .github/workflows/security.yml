@@ -58,8 +58,7 @@ jobs:
       - name: Run production npm audit
         run: npm audit --omit=dev --audit-level=high
 
-      - name: Report Electron build-tool audit findings
-        continue-on-error: true
+      - name: Run full Electron dependency audit
         run: npm audit --audit-level=high
 
       - name: Install HomeGuard backend for smoke test

@@ -64,6 +64,7 @@ from greynoc_homeguard.scheduler import ScheduleManager  # noqa: E402
 from greynoc_homeguard.settings import AppSettings  # noqa: E402
 from greynoc_homeguard.tray import TrayController  # noqa: E402
 from greynoc_homeguard.virus_scanner import (  # noqa: E402
+    _run_json_powershell,
     analyze_processes,
     run_endpoint_malware_scan,
     scan_downloads,
@@ -347,6 +348,16 @@ class DetectionEngineTests(unittest.TestCase):
 
 
 class EndpointMalwareScannerTests(unittest.TestCase):
+    def test_powershell_inventory_respects_execution_policy(self):
+        fake_result = mock.Mock(returncode=0, stdout="[]")
+        with mock.patch("greynoc_homeguard.virus_scanner.subprocess.run", return_value=fake_result) as run:
+            _run_json_powershell("Get-CimInstance Win32_Process")
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["powershell.exe", "-NoProfile"])
+        self.assertNotIn("-ExecutionPolicy", command)
+        self.assertNotIn("Bypass", command)
+
     def test_process_scanner_flags_encoded_download_cradle(self):
         findings, meta = analyze_processes(
             [
@@ -1274,6 +1285,7 @@ class BuildScriptTests(unittest.TestCase):
         verify = (repo / "scripts" / "verify_windows_signature.ps1").read_text(encoding="utf-8")
         sign = (repo / "scripts" / "sign_windows_artifact.ps1").read_text(encoding="utf-8")
         installer = (repo / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
+        inno = (repo / "installer" / "homeguard.iss").read_text(encoding="utf-8")
         self.assertIn("Get-AuthenticodeSignature", verify)
         self.assertIn('Status -ne "Valid"', verify)
         self.assertIn("Set-AuthenticodeSignature", sign)
@@ -1281,6 +1293,7 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn("HOMEGUARD_SIGN_CERT_SHA1", sign)
         self.assertIn("verify_windows_signature.ps1", installer)
         self.assertIn("HomeGuard-Setup-v$Version.exe", installer)
+        self.assertIn('"HomeGuard-Setup-v" + AppVersion', inno)
 
     def test_electron_ui_actions_are_wired_and_private(self):
         repo = Path(__file__).resolve().parents[1]

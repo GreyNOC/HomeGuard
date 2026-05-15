@@ -1,4 +1,23 @@
-﻿# Changelog
+# Changelog
+
+## 1.0.3 - V1.0 Security Release
+
+- Removed PowerShell `ExecutionPolicy Bypass` from the endpoint process inventory scanner.
+- Made the full Electron dependency audit a blocking GitHub Actions gate.
+- Updated release commands and package metadata for the signed V1.0.3 release line.
+- Promoted package metadata from beta to production/stable for V1.0 release readiness.
+
+## 1.0.0 - V1 Release Candidate
+
+- Promoted HomeGuard to V1 release-candidate versioning.
+- Added shared privacy redaction for reports, logs, command output, and Electron display text.
+- Masked full MAC addresses in generated reports and normal UI tables.
+- Removed report metadata paths from generated report exports.
+- Hardened Electron file-open IPC to the HomeGuard app-data area.
+- Removed PowerShell `ExecutionPolicy Bypass` from the admin relaunch action.
+- Added signed Windows installer tooling with Inno Setup, Authenticode signing, timestamping, and signature verification.
+- Added a strict V1 release gate for tests, dependency checks, secret scans, privacy checks, UI placeholder checks, and installer signature verification.
+- Added practical V1 release, privacy, security, and build/signing documentation.
 
 ## 0.4.0
 
@@ -42,14 +61,3 @@
 
 - Initial HomeGuard repo.
 - Safe local discovery, consumer risk scoring, reports, dashboard, and tests.
-# 1.0.0 - V1 Release Candidate
-
-- Promoted HomeGuard to V1 release-candidate versioning.
-- Added shared privacy redaction for reports, logs, command output, and Electron display text.
-- Masked full MAC addresses in generated reports and normal UI tables.
-- Removed report metadata paths from generated report exports.
-- Hardened Electron file-open IPC to the HomeGuard app-data area.
-- Removed PowerShell `ExecutionPolicy Bypass` from the admin relaunch action.
-- Added signed Windows installer tooling with Inno Setup, Authenticode signing, timestamping, and signature verification.
-- Added a strict V1 release gate for tests, dependency checks, secret scans, privacy checks, UI placeholder checks, and installer signature verification.
-- Added practical V1 release, privacy, security, and build/signing documentation.

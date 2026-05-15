@@ -2,7 +2,7 @@
 #define RepoRoot GetEnv("HOMEGUARD_REPO_ROOT")
 #define AppSource RepoRoot + "\dist\electron\win-unpacked"
 #define OutputDir RepoRoot + "\dist\installer"
-#define OutputName "GreyNOC-HomeGuard-Setup-v" + AppVersion
+#define OutputName "HomeGuard-Setup-v" + AppVersion
 
 [Setup]
 AppId={{D7D9B048-17D6-48C0-BD91-78D5E19353BD}

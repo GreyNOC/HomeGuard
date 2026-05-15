@@ -16,7 +16,7 @@ from .definition_schema import (
     validate_nvd_cve_payload as _validate_nvd_cve_payload,
 )
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 # Compatibility guard for CLI builds that reference the trust constants from
 # module scope without importing them. This keeps GNHL --status from crashing

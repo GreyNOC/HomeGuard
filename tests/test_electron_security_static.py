@@ -5,6 +5,7 @@ MAIN = ROOT / "electron" / "main.js"
 PRELOAD = ROOT / "electron" / "preload.js"
 SECURE_MAIN = ROOT / "electron" / "main.secure.js"
 PACKAGE = ROOT / "package.json"
+SECURITY_WORKFLOW = ROOT / ".github" / "workflows" / "security.yml"
 
 
 def _text(path: Path) -> str:
@@ -21,6 +22,12 @@ def test_packaged_electron_uses_secure_entrypoint():
     assert '"PYTHON"' in secure_main
     assert "HOMEGUARD_DEV_MODE" in secure_main
     assert 'require("./main.js")' in secure_main
+
+
+def test_electron_runtime_dependency_audit_is_blocking():
+    workflow = _text(SECURITY_WORKFLOW)
+    assert "npm audit --audit-level=high" in workflow
+    assert "continue-on-error: true" not in workflow
 
 
 def test_preload_exposes_expected_ipc_surface_only_through_context_bridge():

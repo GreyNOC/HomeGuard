@@ -1,7 +1,7 @@
 # HomeGuard Security Review
 
 Review date: 2026-05-03
-Last hardening update: 2026-05-13
+Last hardening update: 2026-05-15
 
 ## Scope Reviewed
 
@@ -20,6 +20,7 @@ Last hardening update: 2026-05-13
 - Electron `open-path` and `show-item` accepted arbitrary renderer-supplied paths. Fixed by limiting open/show operations to the HomeGuard app-data area.
 - Save-as accepted any renderer-supplied HTML source path. Fixed by requiring the source report to be inside HomeGuard app data.
 - Admin relaunch used `ExecutionPolicy Bypass`. Removed the bypass flag; admin relaunch remains explicit and user-triggered.
+- Endpoint process inventory used `ExecutionPolicy Bypass`. Removed the bypass flag so HomeGuard respects the user's PowerShell execution policy while collecting local process metadata.
 - Release signing only covered the PyInstaller executable and did not enforce a signed installer. Added signed installer build, signing, verification, and release gate scripts.
 
 ## Additional Hardening Applied After Review
@@ -30,6 +31,7 @@ Last hardening update: 2026-05-13
 - Dashboard download links include the session token when LAN mode is intentionally enabled.
 - Added `.github/workflows/security.yml` so pull requests and pushes to `main` run Python tests, `pip-audit`, `npm audit --audit-level=high`, the Electron smoke test, and the HomeGuard release security preflight.
 - Added `scripts/security_release_gate.py`, a dependency-free CI preflight that verifies key hardening markers remain present and blocks obvious committed secrets in common text files.
+- Made the full Electron dependency audit blocking in CI; Electron is a shipped runtime dependency even though it is installed as a build-time package.
 
 ## Back Door / Remote Control Review
 

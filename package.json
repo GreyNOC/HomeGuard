@@ -1,6 +1,6 @@
 {
   "name": "homeguard-electron",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Electron frontend for HomeGuard.",
   "author": "GreyNOC",
@@ -18,7 +18,7 @@
     "start": "electron .",
     "smoke": "node electron/smoke.js",
     "test": "python -m unittest discover -s tests -v",
-    "release:gate": "powershell -ExecutionPolicy Bypass -File scripts/release_gate.ps1"
+    "release:gate": "powershell -NoProfile -File scripts/release_gate.ps1"
   },
   "devDependencies": {
     "electron": "42.0.1",
