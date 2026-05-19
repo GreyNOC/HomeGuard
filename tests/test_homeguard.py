@@ -397,6 +397,7 @@ class EndpointMalwareScannerTests(unittest.TestCase):
                 include_defender=True,
                 include_file_scan=False,
                 include_memory=False,
+                include_privesc_audit=False,
                 download_dirs=[],
                 process_rows=[],
             )
@@ -408,6 +409,7 @@ class EndpointMalwareScannerTests(unittest.TestCase):
             result = run_endpoint_malware_scan(
                 include_defender=False,
                 include_memory=False,
+                include_privesc_audit=False,
                 download_dirs=[],
                 process_rows=[
                     {

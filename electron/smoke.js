@@ -7,12 +7,14 @@ const required = [
   "package.json",
   "electron/main.secure.js",
   "electron/main.js",
-  "electron/preload.js",
   "electron/report_assistant_ipc.js",
+  "electron/preload.js",
   "electron/renderer/index.html",
   "electron/renderer/styles.css",
   "electron/renderer/renderer.js",
   "electron/renderer/chat-assistant.js",
+  "src/greynoc_homeguard/endpoint_abuse_signatures.py",
+  "src/greynoc_homeguard/windows_privesc_audit.py",
 ];
 
 for (const relativePath of required) {
@@ -80,6 +82,10 @@ if (!main.includes("ensureTray();") || !main.includes("nativeImage.createFromBuf
 
 if (!main.includes("bundledHomeGuardExecutable") || !main.includes("process.resourcesPath")) {
   throw new Error("Packaged Electron builds are not wired to the bundled HomeGuard backend.");
+}
+
+if (!main.includes("registerReportAssistantIpc")) {
+  throw new Error("Latest-report assistant IPC is not registered by the main process.");
 }
 
 for (const channel of [
@@ -171,6 +177,8 @@ for (const expected of [
   "answerFixFirst",
   "answerRiskyDevices",
   "answerPortOrDevice",
+  "answerResistanceReport",
+  "PowerSploit resistance",
   "sortedFindings",
   "findingActions",
   "isScanCommand",
@@ -181,6 +189,26 @@ for (const expected of [
 }
 if (chatAssistant.includes("The next phase will connect this chat directly to report JSON")) {
   throw new Error("Chat assistant still contains placeholder report-answer text.");
+}
+for (const placeholder of ["next phase", "upcoming command router", "lorem ipsum", "mock data"]) {
+  if (chatAssistant.toLowerCase().includes(placeholder)) {
+    throw new Error(`Assistant still contains placeholder text: ${placeholder}`);
+  }
+}
+
+const endpointSignatures = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "endpoint_abuse_signatures.py"), "utf8");
+if (!endpointSignatures.includes("Invoke-Mimikatz") || !endpointSignatures.includes("destructive_or_mayhem_behavior")) {
+  throw new Error("Endpoint abuse signature pack does not include PowerSploit resistance coverage.");
+}
+
+const privescAudit = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "windows_privesc_audit.py"), "utf8");
+if (!privescAudit.includes("AlwaysInstallElevated") || !privescAudit.includes("run_windows_privesc_audit")) {
+  throw new Error("Windows privilege escalation audit module is missing expected checks.");
+}
+
+const powersploitTests = fs.readFileSync(path.join(root, "tests", "test_endpoint_abuse_signatures.py"), "utf8");
+if (!powersploitTests.includes("POWERSPLOIT_FUNCTION_NAMES") || !powersploitTests.includes("downloaded_content")) {
+  throw new Error("Tests do not reference PowerSploit resistance signature coverage.");
 }
 
 const scanRunner = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "scan_runner.py"), "utf8");

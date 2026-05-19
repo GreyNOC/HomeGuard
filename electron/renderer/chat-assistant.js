@@ -76,6 +76,120 @@
     return String(value || "").toLowerCase();
   }
 
+  const RESISTANCE_GROUPS = [
+    {
+      key: "credential theft",
+      terms: ["credential", "mimikatz", "gpp", "vault", "autologon", "lsass", "password", "minidump", "process_dumping"],
+    },
+    {
+      key: "privilege escalation",
+      terms: ["privesc", "alwaysinstallelevated", "elevat", "system", "sensitive_privilege", "windows_privesc"],
+    },
+    {
+      key: "persistence",
+      terms: ["persistence", "startup", "security support provider", "ssp", "autostart"],
+    },
+    {
+      key: "PowerShell abuse",
+      terms: ["powershell", "encodedcommand", "script_obfuscation", "invoke-expression", "downloadstring"],
+    },
+    {
+      key: "surveillance",
+      terms: ["surveillance", "keystroke", "screenshot", "microphone", "screen capture", "audio capture"],
+    },
+    {
+      key: "shadow copy / raw disk",
+      terms: ["shadow", "raw_ntfs", "ninjacopy", "volume", "direct volume"],
+    },
+    {
+      key: "recon",
+      terms: ["recon", "discovery", "securitypackages", "privescaudit"],
+    },
+    {
+      key: "service/DLL hijack risk",
+      terms: ["service", "dll", "hijack", "unquoted", "scheduled_task", "path_hardening"],
+    },
+  ];
+
+  function resistanceFindingText(finding) {
+    return [
+      finding.rule_id,
+      finding.title,
+      finding.category,
+      finding.plain_english,
+      finding.evidence?.matched_artifact,
+      finding.evidence?.matched_behavior,
+      finding.evidence?.signature_category,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+  }
+
+  function isResistanceFinding(finding) {
+    const text = resistanceFindingText(finding);
+    return /powersploit|mimikatz|privesc|alwaysinstallelevated|autologon|gpp|lsass|powershell|dll|service|shadow|ninjacopy|credential|surveillance|scheduled_task|path_hardening|defender|credential_guard|script_block/.test(text);
+  }
+
+  function highestSeverity(findings) {
+    return findings
+      .map((finding) => String(finding.severity || "info").toLowerCase())
+      .sort((a, b) => (SEVERITY_RANK[b] || 0) - (SEVERITY_RANK[a] || 0))[0] || "info";
+  }
+
+  function topFinding(findings) {
+    return findings
+      .slice()
+      .sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0))[0];
+  }
+
+  function summarizeResistanceReport(report, prompt) {
+    const findings = Array.isArray(report.findings) ? report.findings.filter(isResistanceFinding) : [];
+    const normalized = prompt.toLowerCase();
+    let narrowed = findings;
+    if (/alwaysinstallelevated|installer/.test(normalized)) {
+      narrowed = findings.filter((finding) => resistanceFindingText(finding).includes("alwaysinstallelevated") || resistanceFindingText(finding).includes("installer"));
+    } else if (/mimikatz|credential|password|lsass/.test(normalized)) {
+      narrowed = findings.filter((finding) => RESISTANCE_GROUPS[0].terms.some((term) => resistanceFindingText(finding).includes(term)));
+    } else if (/system|privilege|elevation|harden first/.test(normalized)) {
+      narrowed = findings.filter((finding) => resistanceFindingText(finding).match(/privesc|elevat|system|service|dll|scheduled_task|path_hardening|sensitive_privilege/));
+    }
+
+    const source = narrowed.length ? narrowed : findings;
+    if (!source.length) {
+      return [
+        "I checked the latest report and did not find PowerSploit resistance or Windows privilege-escalation findings.",
+        "If this report was created without the endpoint scan, run a scan first so HomeGuard can review local Windows hardening signals.",
+      ].join("\n");
+    }
+
+    const lines = [
+      `I found ${source.length} relevant PowerSploit resistance finding(s). Highest severity: ${highestSeverity(source)}.`,
+    ];
+    for (const group of RESISTANCE_GROUPS) {
+      const grouped = source.filter((finding) => group.terms.some((term) => resistanceFindingText(finding).includes(term)));
+      if (!grouped.length) {
+        continue;
+      }
+      const top = topFinding(grouped);
+      const fix = Array.isArray(top.recommended_actions) && top.recommended_actions.length ? top.recommended_actions[0] : "Review and harden this finding first.";
+      lines.push(`${group.key}: ${grouped.length}; highest ${highestSeverity(grouped)}; top finding: ${top.title}; recommended fix: ${fix}`);
+    }
+    return lines.join("\n");
+  }
+
+  function isResistancePrompt(normalized) {
+    return /powersploit|mimikatz|privilege escalation|privesc|alwaysinstallelevated|system|harden first|resistance check|protect against/.test(normalized);
+  }
+
+  async function answerResistanceReport(prompt) {
+    const payload = await loadLatestReport();
+    if (!payload?.ok) {
+      return noReportMessage(payload?.message);
+    }
+    return summarizeResistanceReport(payload.report || {}, prompt);
+  }
+
   function findingRank(finding) {
     const severity = SEVERITY_RANK[normalizedText(finding.severity)] || 0;
     const score = Number(finding.risk_score || 0);
@@ -244,7 +358,9 @@
     const thinking = addMessage("assistant", "Checking the latest HomeGuard report...");
     try {
       let answer;
-      if (/fix first|priority|what should i fix|recommend|next step|next steps/.test(normalized)) {
+      if (isResistancePrompt(normalized)) {
+        answer = await answerResistanceReport(prompt);
+      } else if (/fix first|priority|what should i fix|recommend|next step|next steps/.test(normalized)) {
         answer = await answerFixFirst();
       } else if (/risky devices|suspicious devices|unknown devices|dangerous devices/.test(normalized)) {
         answer = await answerRiskyDevices();
@@ -270,7 +386,9 @@
     addMessage("user", prompt);
     chatInput.value = "";
     setChatInputHeight();
-    respondToPrompt(prompt);
+    respondToPrompt(prompt).catch((error) => {
+      addMessage("assistant", error?.message || "I could not read the latest report. Run a scan first, then ask again.");
+    });
   });
 
   chatInput.addEventListener("input", setChatInputHeight);

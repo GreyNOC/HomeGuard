@@ -61,13 +61,16 @@ def _install_definition_schema_validation() -> None:
 
 
 def _install_endpoint_abuse_signatures() -> None:
-    """Attach defensive PowerShell/credential-access signatures."""
+    """Attach defensive endpoint-abuse signatures to the local scanner."""
 
     try:
-        from .endpoint_abuse_signatures import install_endpoint_abuse_signatures
+        from .endpoint_abuse_signatures import install_into_virus_scanner as _install_signatures
     except Exception:
         return
-    install_endpoint_abuse_signatures()
+    try:
+        _install_signatures()
+    except Exception:
+        return
 
 
 _install_definition_schema_validation()

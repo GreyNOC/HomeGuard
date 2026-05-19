@@ -24,6 +24,7 @@ from uuid import uuid4
 from .logging_setup import get_logger
 from .models import Finding
 from .privacy import scrub_text
+from .windows_privesc_audit import run_windows_privesc_audit
 
 LOG = get_logger("virus_scanner")
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -81,6 +82,8 @@ MEMORY_SIGNATURES = {
     b"frombase64string": "In-memory Base64 loader artifact",
     b"downloadstring": "In-memory download cradle artifact",
 }
+
+ENDPOINT_ABUSE_SIGNATURE_METADATA: dict[str, dict[str, Any]] = {}
 
 FILE_CONTENT_SIGNATURES = [
     (
@@ -159,6 +162,44 @@ def _finding(
         recommended_actions=recommended_actions,
         evidence=evidence,
     )
+
+
+def _abuse_metadata(label: str) -> dict[str, Any]:
+    metadata = ENDPOINT_ABUSE_SIGNATURE_METADATA.get(label)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _signature_category(metadata: dict[str, Any], fallback: str) -> str:
+    category = str(metadata.get("category") or "").strip()
+    if not category:
+        return fallback
+    return f"endpoint_{category}"
+
+
+def _signature_plain_english(metadata: dict[str, Any], fallback: str) -> str:
+    return str(metadata.get("plain_english") or fallback)
+
+
+def _signature_actions(metadata: dict[str, Any], fallback: list[str]) -> list[str]:
+    actions = metadata.get("recommended_actions")
+    if isinstance(actions, list) and all(isinstance(action, str) for action in actions):
+        return actions
+    if isinstance(actions, tuple) and all(isinstance(action, str) for action in actions):
+        return list(actions)
+    return fallback
+
+
+def _signature_evidence(metadata: dict[str, Any]) -> dict[str, Any]:
+    if not metadata:
+        return {}
+    evidence: dict[str, Any] = {
+        "signature_category": str(metadata.get("category") or ""),
+        "mitre_tactic": str(metadata.get("mitre_tactic") or ""),
+    }
+    technique = str(metadata.get("mitre_technique") or "")
+    if technique:
+        evidence["mitre_technique_id"] = technique.split(" ", 1)[0]
+    return {key: value for key, value in evidence.items() if value}
 
 
 def default_download_dirs() -> list[Path]:
@@ -363,25 +404,34 @@ def scan_downloads(
             for pattern, label, severity, confidence in FILE_CONTENT_SIGNATURES:
                 if not pattern.search(sample):
                     continue
+                metadata = _abuse_metadata(label)
+                plain_english = _signature_plain_english(
+                    metadata,
+                    (
+                        f"HomeGuard's internal scanner found {label} inside {path.name}. "
+                        "This can indicate malware, a loader script, or a security test file."
+                    ),
+                )
+                recommended_actions = _signature_actions(
+                    metadata,
+                    [
+                        "Do not run or open this file.",
+                        "Quarantine or delete it if it is not a deliberate security test.",
+                        "If the file was already opened, review running processes and startup entries.",
+                    ],
+                )
                 content_hits += 1
                 matches_for_file += 1
                 findings.append(
                     _finding(
                         rule_id="endpoint_internal_file_signature",
                         title=f"Suspicious file content: {label}",
-                        severity=severity,
-                        confidence=confidence,
-                        category="endpoint_file_signature",
-                        plain_english=(
-                            f"HomeGuard's internal scanner found {label} inside {path.name}. "
-                            "This can indicate malware, a loader script, or a security test file."
-                        ),
-                        recommended_actions=[
-                            "Do not run or open this file.",
-                            "Quarantine or delete it if it is not a deliberate security test.",
-                            "If the file was already opened, review running processes and startup entries.",
-                        ],
-                        evidence={**evidence, "matched_artifact": label},
+                        severity=str(metadata.get("severity") or severity),
+                        confidence=float(metadata.get("confidence") or confidence),
+                        category=_signature_category(metadata, "endpoint_file_signature"),
+                        plain_english=plain_english,
+                        recommended_actions=recommended_actions,
+                        evidence={**evidence, "matched_artifact": label, **_signature_evidence(metadata)},
                     )
                 )
                 if matches_for_file >= 3:
@@ -472,28 +522,38 @@ def analyze_processes(processes: Iterable[dict[str, Any]]) -> tuple[list[Finding
         for pattern, label in SUSPICIOUS_CMD_PATTERNS:
             if not pattern.search(command_line):
                 continue
+            metadata = _abuse_metadata(label)
+            plain_english = _signature_plain_english(
+                metadata,
+                (
+                    f"A running process command line matched {label}. Attackers and malware often use this "
+                    "style of command to download, decode, or execute payloads."
+                ),
+            )
+            recommended_actions = _signature_actions(
+                metadata,
+                [
+                    "Review the parent application or scheduled task that launched this command.",
+                    "Run a full antivirus scan and check startup entries.",
+                    "If this was not expected administrative work, isolate this PC from the network.",
+                ],
+            )
             findings.append(
                 _finding(
                     rule_id="endpoint_suspicious_process_command",
                     title=f"Suspicious process command line: {label}",
-                    severity="high",
-                    confidence=0.68,
-                    category="endpoint_process",
-                    plain_english=(
-                        f"A running process command line matched {label}. Attackers and malware often use this "
-                        "style of command to download, decode, or execute payloads."
-                    ),
-                    recommended_actions=[
-                        "Review the parent application or scheduled task that launched this command.",
-                        "Run a full antivirus scan and check startup entries.",
-                        "If this was not expected administrative work, isolate this PC from the network.",
-                    ],
+                    severity=str(metadata.get("severity") or "high"),
+                    confidence=float(metadata.get("confidence") or 0.68),
+                    category=_signature_category(metadata, "endpoint_process"),
+                    plain_english=plain_english,
+                    recommended_actions=recommended_actions,
                     evidence={
                         "pid": pid,
                         "process_name": str(process.get("name") or ""),
                         "matched_behavior": label,
                         "command_line_hint": scrub_text(command_line[:260]),
                         "source": "running_processes",
+                        **_signature_evidence(metadata),
                     },
                 )
             )
@@ -581,35 +641,46 @@ def scan_persistence() -> tuple[list[Finding], dict[str, Any]]:
         command = str(entry.get("command") or "")
         command_lower = command.lower()
         matched_behavior = ""
+        matched_metadata: dict[str, Any] = {}
         for pattern, label in SUSPICIOUS_CMD_PATTERNS:
             if pattern.search(command):
                 matched_behavior = label
+                matched_metadata = _abuse_metadata(label)
                 break
         suspicious_location = any(token in command_lower for token in suspicious_locations)
         script_like = Path(command.strip('"').split(" ")[0]).suffix.lower() in EXECUTABLE_DOWNLOAD_SUFFIXES
         if not matched_behavior and not (suspicious_location and script_like):
             continue
+        plain_english = _signature_plain_english(
+            matched_metadata,
+            (
+                "A startup entry or scheduled task points to behavior commonly used by malware persistence. "
+                "This can also be caused by legitimate admin tools, so review before deleting."
+            ),
+        )
+        recommended_actions = _signature_actions(
+            matched_metadata,
+            [
+                "Verify whether this startup item is expected.",
+                "Disable the startup item if it is unknown, then run a full antivirus scan.",
+                "Check recent downloads and browser extensions if the entry appeared recently.",
+            ],
+        )
         findings.append(
             _finding(
                 rule_id="endpoint_suspicious_persistence",
                 title=f"Suspicious startup persistence: {entry.get('name') or 'startup entry'}",
-                severity="high" if matched_behavior else "medium",
-                confidence=0.66,
-                category="endpoint_persistence",
-                plain_english=(
-                    "A startup entry or scheduled task points to behavior commonly used by malware persistence. "
-                    "This can also be caused by legitimate admin tools, so review before deleting."
-                ),
-                recommended_actions=[
-                    "Verify whether this startup item is expected.",
-                    "Disable the startup item if it is unknown, then run a full antivirus scan.",
-                    "Check recent downloads and browser extensions if the entry appeared recently.",
-                ],
+                severity=str(matched_metadata.get("severity") or ("high" if matched_behavior else "medium")),
+                confidence=float(matched_metadata.get("confidence") or 0.66),
+                category=_signature_category(matched_metadata, "endpoint_persistence"),
+                plain_english=plain_english,
+                recommended_actions=recommended_actions,
                 evidence={
                     "entry_name": str(entry.get("name") or ""),
                     "entry_source": str(entry.get("source") or ""),
                     "matched_behavior": matched_behavior or "script_or_executable_in_user_writable_location",
                     "command_hint": scrub_text(command[:260]),
+                    **_signature_evidence(matched_metadata),
                 },
             )
         )
@@ -691,27 +762,37 @@ def scan_process_memory(processes: Iterable[dict[str, Any]], *, max_processes: i
         for signature, label in signatures.items():
             if signature not in haystack:
                 continue
+            metadata = _abuse_metadata(label)
+            plain_english = _signature_plain_english(
+                metadata,
+                (
+                    f"Readable memory from process {process.get('name') or pid} contained a string associated "
+                    "with malware, credential theft, or in-memory payload loading."
+                ),
+            )
+            recommended_actions = _signature_actions(
+                metadata,
+                [
+                    "Run a full offline antivirus scan if available.",
+                    "Do not enter passwords on this PC until the process is reviewed.",
+                    "If this was unexpected, isolate this PC from the network and preserve the report.",
+                ],
+            )
             findings.append(
                 _finding(
                     rule_id="endpoint_memory_signature",
                     title=f"Suspicious memory artifact: {label}",
-                    severity="high",
-                    confidence=0.62,
-                    category="endpoint_memory",
-                    plain_english=(
-                        f"Readable memory from process {process.get('name') or pid} contained a string associated "
-                        "with malware, credential theft, or in-memory payload loading."
-                    ),
-                    recommended_actions=[
-                        "Run a full offline antivirus scan if available.",
-                        "Do not enter passwords on this PC until the process is reviewed.",
-                        "If this was unexpected, isolate this PC from the network and preserve the report.",
-                    ],
+                    severity=str(metadata.get("severity") or "high"),
+                    confidence=float(metadata.get("confidence") or 0.62),
+                    category=_signature_category(metadata, "endpoint_memory"),
+                    plain_english=plain_english,
+                    recommended_actions=recommended_actions,
                     evidence={
                         "pid": pid,
                         "process_name": str(process.get("name") or ""),
                         "matched_artifact": label,
                         "source": "process_memory",
+                        **_signature_evidence(metadata),
                     },
                 )
             )
@@ -723,6 +804,7 @@ def run_endpoint_malware_scan(
     include_defender: bool = False,
     include_file_scan: bool = True,
     include_memory: bool = True,
+    include_privesc_audit: bool = True,
     download_dirs: Iterable[Path] | None = None,
     process_rows: Iterable[dict[str, Any]] | None = None,
     progress: Callable[[str], None] | None = None,
@@ -741,6 +823,7 @@ def run_endpoint_malware_scan(
             "internal_file_scan": "newest_500_files_first_4mb_plus_tail_bounded_to_256mb",
         },
         "external_antivirus": "not_used",
+        "privesc_audit_enabled": include_privesc_audit,
     }
 
     if progress:
@@ -772,6 +855,24 @@ def run_endpoint_malware_scan(
         metadata.update(memory_meta)
         if "process_memory" not in metadata["scope"]:
             metadata["scope"].append("process_memory")
+
+    if include_privesc_audit:
+        if progress:
+            progress("Endpoint scan: running passive Windows privilege escalation audit")
+        privesc = run_windows_privesc_audit()
+        all_findings.extend(privesc.findings)
+        metadata.update(privesc.metadata)
+        if "windows_privesc_audit" not in metadata["scope"]:
+            metadata["scope"].append("windows_privesc_audit")
+    else:
+        metadata.update(
+            {
+                "privesc_checks_run": [],
+                "privesc_checks_skipped": ["disabled_by_caller"],
+                "privesc_audit_platform": platform.system(),
+                "privesc_audit_partial_results": False,
+            }
+        )
 
     if include_defender:
         metadata["external_antivirus_requested"] = "ignored_internal_scanner_only"
