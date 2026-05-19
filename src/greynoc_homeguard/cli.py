@@ -6,9 +6,11 @@ import os
 import shutil
 import sys
 import textwrap
+import traceback
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .baseline import (
     BaselineStore,
     OWNER_VALUES,
@@ -42,6 +44,8 @@ from .scheduler import INTERVAL_VALUES, ScheduleManager
 
 
 _COLOR = False
+_JSON_MODE = False
+_DEBUG = False
 _RESET = "\033[0m"
 _PALETTE = {
     "blue": "\033[38;5;39m",
@@ -231,6 +235,10 @@ def _table(headers: list[str], rows: list[list[object]], *, max_cell: int = 34) 
         print("  " + "  ".join(cells))
 
 
+def _emit_json(payload: Any) -> None:
+    print(json.dumps(payload, default=str, indent=2, sort_keys=True))
+
+
 def _ok(message: str) -> None:
     print(f"{_style('[ok]', 'bold', 'green')} {message}")
 
@@ -293,25 +301,36 @@ def _print_paths(paths: dict[str, Path]) -> None:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
+    # In --json mode we suppress per-line progress chatter so the only thing
+    # on stdout is a single JSON object the caller can parse.
     def progress(message: str) -> None:
+        if _JSON_MODE:
+            return
         print(f"{_style('[scan]', 'bold', 'cyan')} {message}", flush=True)
 
-    _rule("HomeGuard Scan")
-    if args.out:
-        report, paths, _entry = run_full_scan(
-            active=args.active,
-            probe_all=args.probe_all,
-            output_dir=args.out,
-            endpoint_scan=not args.no_endpoint_scan,
-            progress=progress,
+    if not _JSON_MODE:
+        _rule("HomeGuard Scan")
+    report, paths, _entry = run_full_scan(
+        active=args.active,
+        probe_all=args.probe_all,
+        output_dir=args.out or None,
+        endpoint_scan=not args.no_endpoint_scan,
+        progress=progress,
+    )
+    if _JSON_MODE:
+        _emit_json(
+            {
+                "report_id": report.report_id,
+                "created_at": report.created_at,
+                "overall_risk": report.overall_risk,
+                "overall_score": report.overall_score,
+                "device_count": len(report.devices),
+                "finding_count": len(report.findings),
+                "summary": report.summary,
+                "paths": {key: str(path) for key, path in paths.items()},
+            }
         )
-    else:
-        report, paths, _entry = run_full_scan(
-            active=args.active,
-            probe_all=args.probe_all,
-            endpoint_scan=not args.no_endpoint_scan,
-            progress=progress,
-        )
+        return 0
     _print_paths(paths)
     _panel(
         "Scan Summary",
@@ -346,13 +365,28 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if baseline is not None and not args.no_update_baseline:
         baseline.update(devices)
         baseline.save()
+    if _JSON_MODE:
+        _emit_json(
+            {
+                "report_id": report.report_id,
+                "overall_risk": report.overall_risk,
+                "overall_score": report.overall_score,
+                "device_count": len(report.devices),
+                "finding_count": len(report.findings),
+                "paths": {key: str(path) for key, path in paths.items()},
+            }
+        )
+        return 0
     _print_paths(paths)
     return 0
 
 
 def cmd_update_definitions(args: argparse.Namespace) -> int:
-    _rule("Definition Update")
     status = DefinitionManager().update_from_sources(nvd_days=args.nvd_days)
+    if _JSON_MODE:
+        _emit_json(status)
+        return 0
+    _rule("Definition Update")
     _panel(
         "Security Definitions",
         [
@@ -418,6 +452,9 @@ def cmd_custom_rules_init(args: argparse.Namespace) -> int:
 
 def cmd_definitions_status(_args: argparse.Namespace) -> int:
     status = DefinitionManager().status()
+    if _JSON_MODE:
+        _emit_json(status)
+        return 0
     _panel(
         "Security Definitions",
         [
@@ -463,6 +500,17 @@ def cmd_tray(_args: argparse.Namespace) -> int:
 
 def cmd_schedule_show(_args: argparse.Namespace) -> int:
     cfg = ScheduleManager().load()
+    if _JSON_MODE:
+        _emit_json(
+            {
+                "enabled": cfg.enabled,
+                "interval": cfg.interval,
+                "background_monitor": cfg.background_monitor,
+                "last_run": cfg.last_run,
+                "next_run": cfg.next_run,
+            }
+        )
+        return 0
     _panel(
         "Schedule",
         [
@@ -507,6 +555,9 @@ def cmd_schedule_set(args: argparse.Namespace) -> int:
 def cmd_history(args: argparse.Namespace) -> int:
     history = ProtectionHistory().load()
     entries = history.entries()
+    if _JSON_MODE:
+        _emit_json({"entries": [entry.as_dict() for entry in entries[: args.limit]]})
+        return 0
     if not entries:
         _warn(f"No scans yet. Run `{_command('--scan')}` to create your first report.")
         return 0
@@ -531,6 +582,9 @@ def cmd_history(args: argparse.Namespace) -> int:
 def cmd_devices_list(_args: argparse.Namespace) -> int:
     store = BaselineStore(default_baseline_path()).load()
     rows = store.all_records()
+    if _JSON_MODE:
+        _emit_json({"devices": rows})
+        return 0
     if not rows:
         _warn(f"No known devices yet. Run `{_command('--scan')}` to populate the trust list.")
         return 0
@@ -614,6 +668,41 @@ def cmd_status(_args: argparse.Namespace) -> int:
     unknown = max(0, len(devices) - trusted - quarantined)
     latest = ProtectionHistory().load().latest()
 
+    if _JSON_MODE:
+        _emit_json(
+            {
+                "protection": {
+                    "known_devices": len(devices),
+                    "trusted": trusted,
+                    "unknown": unknown,
+                    "quarantined": quarantined,
+                    "data_dir": str(user_data_dir()),
+                },
+                "definitions": definitions,
+                "schedule": {
+                    "enabled": schedule.enabled,
+                    "interval": schedule.interval,
+                    "next_run": schedule.next_run,
+                    "last_run": schedule.last_run,
+                    "background_monitor": schedule.background_monitor,
+                },
+                "latest_scan": (
+                    {
+                        "created_at": latest.created_at,
+                        "report_id": latest.report_id,
+                        "overall_risk": latest.overall_risk,
+                        "overall_score": latest.overall_score,
+                        "device_count": latest.device_count,
+                        "finding_count": latest.finding_count,
+                        "html_path": latest.html_path,
+                    }
+                    if latest is not None
+                    else None
+                ),
+            }
+        )
+        return 0
+
     _rule("Mission Control")
     _panel(
         "Protection",
@@ -680,6 +769,24 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("auto", "always", "never"),
         default="auto",
         help="Terminal color mode",
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"GNHL {__version__}",
+        help="Show GNHL version and exit",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_mode",
+        help="Emit machine-readable JSON instead of styled tables (status, history, devices list, definitions-status, scan summary)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print full Python traceback on errors (also enabled by HOMEGUARD_DEBUG=1)",
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
@@ -795,6 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _JSON_MODE, _DEBUG
     setup_logging()
     ensure_app_dirs()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -810,13 +918,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(raw_argv)
     _configure_color(args.color)
+    _JSON_MODE = bool(getattr(args, "json_mode", False))
+    _DEBUG = bool(getattr(args, "debug", False)) or os.environ.get("HOMEGUARD_DEBUG", "").lower() in {"1", "true", "yes"}
+    if _JSON_MODE:
+        # JSON output is meant to be parsed; ANSI escapes would corrupt it.
+        _configure_color("never")
     if not hasattr(args, "func"):
         _welcome(parser)
         return 0
     try:
         return int(args.func(args))
     except Exception as exc:
-        print(f"{_style('error:', 'bold', 'red')} {exc}", file=sys.stderr)
+        if _DEBUG:
+            traceback.print_exc(file=sys.stderr)
+        else:
+            print(f"{_style('error:', 'bold', 'red')} {exc}", file=sys.stderr)
+            print(_muted("  Run with --debug to see the full traceback."), file=sys.stderr)
         return 2
 
 
