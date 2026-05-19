@@ -101,6 +101,27 @@ class HomeGuardDetectionEngine:
         self.definitions = definitions or {}
         self.rules = self._load_rules(self.definitions)
         self.telemetry = DetectionTelemetry(rules_loaded=len(self.rules))
+        # Detector dispatch table built once per engine, not per device.
+        # A typical scan evaluates dozens of devices against dozens of rules,
+        # so rebuilding this dict on every device was pure waste.
+        self._detector_registry: dict[
+            str, Callable[[DetectionRule, Device, BaselineStore | None], list[Finding]]
+        ] = {
+            "new_device": self._detect_new_device,
+            "missing_mac": self._detect_missing_mac,
+            "risky_port": self._detect_risky_ports,
+            "many_open_ports": self._detect_many_open_ports,
+            "default_name_hint": self._detect_default_name_hint,
+            "product_hint": self._detect_product_hints,
+            "known_exploited_vulnerability": self._detect_kev_hints,
+            "quarantined_device": self._detect_quarantined_device,
+            "possible_unauthorized_access": self._detect_possible_unauthorized_access,
+            "remote_admin_cluster": self._detect_remote_admin_cluster,
+            "possible_malware_service": self._detect_possible_malware_service,
+            "hostname_collision": self._detect_hostname_collision,
+            "custom_hostname_match": self._detect_custom_hostname_match,
+            "custom_mac_prefix_match": self._detect_custom_mac_prefix_match,
+        }
 
     def health(self) -> dict[str, Any]:
         return {
@@ -126,26 +147,10 @@ class HomeGuardDetectionEngine:
 
     def evaluate_device(self, device: Device, baseline: BaselineStore | None = None) -> list[Finding]:
         findings: list[Finding] = []
-        registry: dict[str, Callable[[DetectionRule, Device, BaselineStore | None], list[Finding]]] = {
-            "new_device": self._detect_new_device,
-            "missing_mac": self._detect_missing_mac,
-            "risky_port": self._detect_risky_ports,
-            "many_open_ports": self._detect_many_open_ports,
-            "default_name_hint": self._detect_default_name_hint,
-            "product_hint": self._detect_product_hints,
-            "known_exploited_vulnerability": self._detect_kev_hints,
-            "quarantined_device": self._detect_quarantined_device,
-            "possible_unauthorized_access": self._detect_possible_unauthorized_access,
-            "remote_admin_cluster": self._detect_remote_admin_cluster,
-            "possible_malware_service": self._detect_possible_malware_service,
-            "hostname_collision": self._detect_hostname_collision,
-            "custom_hostname_match": self._detect_custom_hostname_match,
-            "custom_mac_prefix_match": self._detect_custom_mac_prefix_match,
-        }
         for rule in self.rules:
             if not rule.enabled:
                 continue
-            detector = registry.get(rule.rule_type)
+            detector = self._detector_registry.get(rule.rule_type)
             if detector is None:
                 continue
             self.telemetry.rules_evaluated += 1

@@ -21,36 +21,45 @@ class HomeGuardEngine:
     detection_engine: HomeGuardDetectionEngine = field(init=False)
 
     def __post_init__(self) -> None:
-        loaded_from_disk = self.definitions is None
-        if loaded_from_disk:
-            manager = DefinitionManager()
-            self.definitions = manager.load()
-            self.definition_status = manager.status()
-        elif not self.definition_status:
-            self.definition_status = {
-                "definitions_version": str(self.definitions.get("definitions_version") or "custom"),
-                "updated_at": str(self.definitions.get("updated_at") or "unknown"),
-                "kev_count": len(self.definitions.get("kev_catalog") or []),
-                "recent_cve_count": len(self.definitions.get("recent_cves") or []),
-                "update_status": str(self.definitions.get("update_status") or "current"),
-            }
-        # Merge user custom rules (if any) only when the engine is operating
+        # Custom user rules are only merged when the engine is operating
         # against the live on-disk definition store. Tests that construct
         # the engine with an explicit ``definitions=`` argument get a
         # fully reproducible rule set without leakage from the developer's
         # own custom_rules.json.
-        if loaded_from_disk:
-            custom = load_custom_rules()
-            if has_any_rules(custom):
-                apply_to_definitions(self.definitions or {}, custom)
-                self.definition_status = dict(self.definition_status)
-                self.definition_status["custom_rules_active"] = True
-                self.definition_status["custom_rules_summary"] = {
-                    "risky_ports": len(custom.get("risky_ports") or []),
-                    "watch_hostnames": len(custom.get("watch_hostnames") or []),
-                    "watch_mac_prefixes": len(custom.get("watch_mac_prefixes") or []),
-                }
+        if self.definitions is None:
+            self._load_definitions_from_disk()
+            self._overlay_custom_rules()
+        elif not self.definition_status:
+            self._synthesize_status_from_passed_definitions()
         self.detection_engine = HomeGuardDetectionEngine(self.definitions or {})
+
+    def _load_definitions_from_disk(self) -> None:
+        manager = DefinitionManager()
+        self.definitions = manager.load()
+        self.definition_status = manager.status()
+
+    def _synthesize_status_from_passed_definitions(self) -> None:
+        assert self.definitions is not None  # narrowed by caller
+        self.definition_status = {
+            "definitions_version": str(self.definitions.get("definitions_version") or "custom"),
+            "updated_at": str(self.definitions.get("updated_at") or "unknown"),
+            "kev_count": len(self.definitions.get("kev_catalog") or []),
+            "recent_cve_count": len(self.definitions.get("recent_cves") or []),
+            "update_status": str(self.definitions.get("update_status") or "current"),
+        }
+
+    def _overlay_custom_rules(self) -> None:
+        custom = load_custom_rules()
+        if not has_any_rules(custom):
+            return
+        apply_to_definitions(self.definitions or {}, custom)
+        self.definition_status = dict(self.definition_status)
+        self.definition_status["custom_rules_active"] = True
+        self.definition_status["custom_rules_summary"] = {
+            "risky_ports": len(custom.get("risky_ports") or []),
+            "watch_hostnames": len(custom.get("watch_hostnames") or []),
+            "watch_mac_prefixes": len(custom.get("watch_mac_prefixes") or []),
+        }
 
     def evaluate_device(self, device: Device, baseline: BaselineStore | None = None) -> list[Finding]:
         return self.detection_engine.evaluate_device(device, baseline)

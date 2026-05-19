@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import builtins as _builtins
 import json as _json
 from pathlib import Path as _Path
 from typing import Any as _Any
 
-from .baseline import TRUST_QUARANTINED as _TRUST_QUARANTINED
-from .baseline import TRUST_TRUSTED as _TRUST_TRUSTED
 from .definition_schema import (
     DefinitionSchemaError as _DefinitionSchemaError,
     validate_cisa_kev_payload as _validate_cisa_kev_payload,
@@ -17,14 +14,6 @@ from .definition_schema import (
 )
 
 __version__ = "1.0.3"
-
-# Compatibility guard for CLI builds that reference the trust constants from
-# module scope without importing them. This keeps GNHL --status from crashing
-# until cli.py can be simplified in a follow-up direct edit.
-if not hasattr(_builtins, "TRUST_TRUSTED"):
-    _builtins.TRUST_TRUSTED = _TRUST_TRUSTED
-if not hasattr(_builtins, "TRUST_QUARANTINED"):
-    _builtins.TRUST_QUARANTINED = _TRUST_QUARANTINED
 
 
 def _install_definition_schema_validation() -> None:
