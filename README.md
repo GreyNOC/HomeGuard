@@ -130,19 +130,19 @@ This product uses data from the NVD API but is not endorsed or certified by the 
 V1 customer releases are signed setup installers. Configure a GreyNOC code-signing certificate through secure local storage or CI/CD secrets, then run:
 
 ```powershell
-powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version 1.0.3
+powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version 1.0.4
 ```
 
 Expected artifact:
 
 ```text
-dist\installer\HomeGuard-Setup-v1.0.3.exe
+dist\installer\HomeGuard-Setup-v1.0.4.exe
 ```
 
 Verify before publishing:
 
 ```powershell
-powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.0.3.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.0.4.exe -ExpectedPublisher GreyNOC
 ```
 
 See `docs/release/BUILD_AND_SIGNING.md` and `docs/release/RELEASE_CHECKLIST.md` for the full release gate.

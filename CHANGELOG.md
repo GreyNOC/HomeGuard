@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.4 - PowerSploit Resistance Release
+
+- Added defensive PowerSploit-style endpoint artifact signatures for process command lines, downloaded scripts, startup entries, and sampled memory strings.
+- Added a passive Windows privilege-escalation audit for common hardening risks such as AlwaysInstallElevated, AutoLogon, weak service paths, scheduled task paths, PowerShell logging, Defender posture, and credential exposure indicators.
+- Added report-aware assistant answers for PowerSploit resistance, credential theft, privilege escalation, persistence, service/DLL hijack risk, and hardening priority questions.
+- Expanded smoke and unit coverage for endpoint abuse signatures, passive audit safety, redaction, and report assistant wiring.
+- Documented that HomeGuard detects and reports defensive indicators only; it does not run offensive tools, generate payloads, bypass controls, dump credentials, or exploit misconfigurations.
+
 ## 1.0.3 - V1.0 Security Release
 
 - Removed PowerShell `ExecutionPolicy Bypass` from the endpoint process inventory scanner.

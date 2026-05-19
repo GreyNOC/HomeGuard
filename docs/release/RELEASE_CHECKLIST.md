@@ -1,6 +1,6 @@
 # HomeGuard V1 Release Checklist
 
-Release artifact: `HomeGuard-Setup-v1.0.3.exe`
+Release artifact: `HomeGuard-Setup-v1.0.4.exe`
 
 ## Required CI Gate
 
@@ -26,7 +26,7 @@ Do not publish from a commit where this workflow is failing, skipped, or disable
 Run from a clean Windows release workstation after building the installer:
 
 ```powershell
-powershell -NoProfile -File scripts\release_gate.ps1 -InstallerPath dist\installer\HomeGuard-Setup-v1.0.3.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\release_gate.ps1 -InstallerPath dist\installer\HomeGuard-Setup-v1.0.4.exe -ExpectedPublisher GreyNOC
 ```
 
 The release is not V1-ready unless all items pass:
@@ -59,13 +59,13 @@ The release is not V1-ready unless all items pass:
 Build signed installer:
 
 ```powershell
-powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version 1.0.3
+powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version 1.0.4
 ```
 
 Verify signature:
 
 ```powershell
-powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.0.3.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.0.4.exe -ExpectedPublisher GreyNOC
 ```
 
 Run local security preflight:

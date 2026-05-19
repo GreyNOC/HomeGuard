@@ -33,13 +33,13 @@ All signing uses SHA-256 and trusted timestamping through `http://timestamp.digi
 ## Build Signed V1 Installer
 
 ```powershell
-powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version 1.0.3
+powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version 1.0.4
 ```
 
 Expected final artifact:
 
 ```text
-dist\installer\HomeGuard-Setup-v1.0.3.exe
+dist\installer\HomeGuard-Setup-v1.0.4.exe
 ```
 
 The build fails if:
@@ -54,7 +54,7 @@ The build fails if:
 ## Verify Installer Signature
 
 ```powershell
-powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.0.3.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.0.4.exe -ExpectedPublisher GreyNOC
 ```
 
 Do not publish the installer unless this command succeeds.
