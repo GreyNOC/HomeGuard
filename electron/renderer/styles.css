@@ -281,6 +281,153 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .fieldset { margin-top: 18px; border: 1px solid var(--border); border-radius: 16px; background: #0d131a; padding: 16px; }
 .log-view, .output-panel pre { min-height: 520px; margin: 0; overflow: auto; border: 1px solid var(--border); border-radius: 14px; background: #05070a; color: #d8e6ff; padding: 14px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 
+.scan-progress-card {
+  border-color: rgba(119, 214, 255, 0.36);
+  background:
+    radial-gradient(circle at 14% 20%, rgba(120, 232, 255, 0.14), transparent 32%),
+    radial-gradient(circle at 86% 24%, rgba(249, 98, 255, 0.12), transparent 28%),
+    linear-gradient(135deg, rgba(9, 16, 25, 0.98), rgba(16, 24, 35, 0.96));
+}
+.scan-progress-card h2 { font-size: 22px; }
+.scan-progress-summary { color: #d8f3ff; }
+.scan-progress-log {
+  margin-top: 10px;
+  border: 1px solid rgba(122, 211, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(3, 7, 12, 0.66);
+  color: #bfefff;
+  padding: 10px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.scan-progress-avatar {
+  border-radius: 10px;
+  background: #06131f;
+  color: #a8ecff;
+  box-shadow: 0 0 18px rgba(106, 219, 255, 0.24);
+}
+
+.scan-orb {
+  width: 66px;
+  height: 66px;
+  border-radius: 18px;
+  opacity: 0.46;
+  image-rendering: pixelated;
+  filter: saturate(0.82) contrast(1.08);
+  background:
+    linear-gradient(90deg, rgba(145, 231, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(145, 231, 255, 0.06) 1px, transparent 1px),
+    radial-gradient(circle at center, rgba(3, 8, 16, 0.95) 0 37%, rgba(10, 18, 29, 0.88) 38% 52%, transparent 53%);
+  background-size: 6px 6px, 6px 6px, 100% 100%;
+  box-shadow:
+    inset 0 0 0 1px rgba(148, 220, 255, 0.18),
+    0 0 24px rgba(57, 188, 255, 0.12);
+  transition: filter 160ms ease, opacity 160ms ease, box-shadow 160ms ease;
+}
+.scan-orb.is-active {
+  opacity: 1;
+  filter: saturate(1.4) contrast(1.18);
+  animation: scan-synapse-field 2200ms steps(8, end) infinite;
+  box-shadow:
+    inset 0 0 0 1px rgba(170, 242, 255, 0.28),
+    0 0 32px rgba(54, 194, 255, 0.2),
+    0 0 54px rgba(190, 80, 255, 0.13);
+}
+.scan-orb::before {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 20deg,
+      #73e7ff 0deg 26deg,
+      transparent 27deg 54deg,
+      #e56bff 55deg 72deg,
+      transparent 73deg 118deg,
+      #f7e36d 119deg 135deg,
+      transparent 136deg 178deg,
+      #7cffbf 179deg 205deg,
+      transparent 206deg 253deg,
+      #60a5ff 254deg 286deg,
+      transparent 287deg 330deg,
+      #ffffff 331deg 342deg,
+      transparent 343deg 360deg);
+  mask: radial-gradient(circle, transparent 0 41%, #000 42% 57%, transparent 58%);
+  -webkit-mask: radial-gradient(circle, transparent 0 41%, #000 42% 57%, transparent 58%);
+  box-shadow: none;
+  opacity: 0.72;
+}
+.scan-orb.is-active::before { animation: scan-synapse-ring 1120ms steps(12, end) infinite; }
+.scan-orb::after {
+  content: "";
+  position: absolute;
+  inset: 24px;
+  border: 0;
+  border-radius: 7px;
+  background: #aaf2ff;
+  box-shadow:
+    -12px -6px 0 -3px rgba(229, 107, 255, 0.8),
+    13px 3px 0 -3px rgba(124, 255, 191, 0.75),
+    -5px 14px 0 -3px rgba(247, 227, 109, 0.72),
+    0 0 18px rgba(170, 242, 255, 0.5);
+  opacity: 0.62;
+}
+.scan-orb.is-active::after { animation: scan-synapse-core 760ms steps(6, end) infinite; opacity: 1; }
+.scan-orb span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px;
+  border-radius: 2px;
+  background: #8fe8ff;
+  box-shadow: 0 0 12px rgba(143, 232, 255, 0.72);
+  transform-origin: center;
+  opacity: 0.38;
+}
+.scan-orb.is-active span { animation: scan-synapse-node 960ms steps(5, end) infinite; }
+.scan-orb span:nth-child(1) { transform: rotate(0deg) translateY(-29px); animation-delay: -40ms; }
+.scan-orb span:nth-child(2) { transform: rotate(30deg) translateY(-24px); animation-delay: -160ms; }
+.scan-orb span:nth-child(3) { transform: rotate(62deg) translateY(-30px); animation-delay: -280ms; }
+.scan-orb span:nth-child(4) { transform: rotate(92deg) translateY(-23px); animation-delay: -400ms; }
+.scan-orb span:nth-child(5) { transform: rotate(124deg) translateY(-31px); animation-delay: -520ms; }
+.scan-orb span:nth-child(6) { transform: rotate(154deg) translateY(-25px); animation-delay: -640ms; }
+.scan-orb span:nth-child(7) { transform: rotate(184deg) translateY(-30px); animation-delay: -760ms; }
+.scan-orb span:nth-child(8) { transform: rotate(214deg) translateY(-23px); animation-delay: -880ms; }
+.scan-orb span:nth-child(9) { transform: rotate(246deg) translateY(-30px); animation-delay: -1000ms; }
+.scan-orb span:nth-child(10) { transform: rotate(278deg) translateY(-25px); animation-delay: -1120ms; }
+.scan-orb span:nth-child(11) { transform: rotate(310deg) translateY(-31px); animation-delay: -1240ms; }
+.scan-orb span:nth-child(12) { transform: rotate(340deg) translateY(-24px); animation-delay: -1360ms; }
+@keyframes scan-synapse-field {
+  0% { background-position: 0 0, 0 0, center; }
+  25% { background-position: 6px 0, 0 6px, center; }
+  50% { background-position: 12px 6px, 6px 12px, center; }
+  75% { background-position: 6px 12px, 12px 6px, center; }
+  100% { background-position: 0 0, 0 0, center; }
+}
+@keyframes scan-synapse-ring {
+  0% { transform: rotate(0deg) scale(1); filter: hue-rotate(0deg); opacity: .64; }
+  40% { transform: rotate(54deg) scale(1.04); filter: hue-rotate(74deg); opacity: 1; }
+  70% { transform: rotate(126deg) scale(.97); filter: hue-rotate(154deg); opacity: .78; }
+  100% { transform: rotate(180deg) scale(1); filter: hue-rotate(220deg); opacity: .86; }
+}
+@keyframes scan-synapse-core {
+  0%, 100% { transform: translate(0, 0) scale(1); background: #aaf2ff; }
+  18% { transform: translate(2px, -1px) scale(1.28); background: #e56bff; }
+  42% { transform: translate(-2px, 2px) scale(.82); background: #7cffbf; }
+  68% { transform: translate(1px, 2px) scale(1.18); background: #f7e36d; }
+}
+@keyframes scan-synapse-node {
+  0% { opacity: .22; filter: hue-rotate(0deg); box-shadow: 0 0 6px rgba(143, 232, 255, 0.28); }
+  28% { opacity: 1; filter: hue-rotate(75deg); box-shadow: 0 0 16px rgba(229, 107, 255, 0.86); }
+  52% { opacity: .58; filter: hue-rotate(146deg); box-shadow: 0 0 10px rgba(124, 255, 191, 0.62); }
+  74% { opacity: .92; filter: hue-rotate(226deg); box-shadow: 0 0 18px rgba(247, 227, 109, 0.75); }
+  100% { opacity: .32; filter: hue-rotate(320deg); box-shadow: 0 0 7px rgba(143, 232, 255, 0.34); }
+}
+
 @media (max-width: 1120px) {
   .app-shell { grid-template-columns: 230px 1fr; }
   .chat-page { grid-template-columns: 1fr; overflow: auto; }
