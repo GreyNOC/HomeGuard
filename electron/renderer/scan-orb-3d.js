@@ -241,6 +241,10 @@
       lastFrame: performance.now(),
       running: true,
       disposed: false,
+      // Tracks the in-flight requestAnimationFrame so a pending callback
+      // (paused while document.hidden) cannot stack with a new one queued
+      // on visibilitychange, doubling the render loop on each hide/show.
+      rafId: null,
     };
 
     const tmpColor = new THREE.Color();
@@ -367,6 +371,7 @@
     }
 
     function frame(now) {
+      state.rafId = null;
       if (state.disposed) return;
       const dt = Math.min(0.05, (now - state.lastFrame) / 1000);
       state.lastFrame = now;
@@ -395,18 +400,25 @@
 
       renderer.render(scene, camera);
       if (state.running) {
-        requestAnimationFrame(frame);
+        state.rafId = requestAnimationFrame(frame);
       }
     }
-    requestAnimationFrame(frame);
+    state.rafId = requestAnimationFrame(frame);
 
     function onVisibility() {
       if (document.hidden) {
         state.running = false;
-      } else if (!state.running && !state.disposed) {
+        // Chromium pauses (does not cancel) the already-queued rAF when the
+        // document is hidden. Cancel it so a single restored loop runs on
+        // visibility — never two stacked loops doing identical work.
+        if (state.rafId !== null) {
+          cancelAnimationFrame(state.rafId);
+          state.rafId = null;
+        }
+      } else if (!state.disposed && state.rafId === null) {
         state.running = true;
         state.lastFrame = performance.now();
-        requestAnimationFrame(frame);
+        state.rafId = requestAnimationFrame(frame);
       }
     }
     document.addEventListener("visibilitychange", onVisibility);
@@ -418,6 +430,10 @@
       dispose() {
         state.disposed = true;
         state.running = false;
+        if (state.rafId !== null) {
+          cancelAnimationFrame(state.rafId);
+          state.rafId = null;
+        }
         document.removeEventListener("visibilitychange", onVisibility);
         ro.disconnect();
         renderer.dispose();
