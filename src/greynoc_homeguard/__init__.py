@@ -60,4 +60,15 @@ def _install_definition_schema_validation() -> None:
     _definitions._HOMEGUARD_SCHEMA_VALIDATION_INSTALLED = True
 
 
+def _install_endpoint_abuse_signatures() -> None:
+    """Attach defensive PowerShell/credential-access signatures."""
+
+    try:
+        from .endpoint_abuse_signatures import install_endpoint_abuse_signatures
+    except Exception:
+        return
+    install_endpoint_abuse_signatures()
+
+
 _install_definition_schema_validation()
+_install_endpoint_abuse_signatures()
