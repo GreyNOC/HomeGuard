@@ -1,0 +1,135 @@
+name: Build signed Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, without leading v
+        required: true
+        default: 1.0.4
+      tag_name:
+        description: Release tag name
+        required: true
+        default: v1.0.4
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build-and-publish:
+    name: Build, sign, and publish Windows artifacts
+    runs-on: windows-latest
+
+    env:
+      HOMEGUARD_REQUIRE_SIGNING: "1"
+      HOMEGUARD_SIGN_CERT_PATH: ${{ github.workspace }}\GreyNOC-CodeSigning.pfx
+      HOMEGUARD_SIGN_CERT_PASSWORD: ${{ secrets.HOMEGUARD_SIGN_CERT_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+            $tagName = "${{ inputs.tag_name }}"
+          } else {
+            $tagName = "${{ github.ref_name }}"
+            $version = $tagName -replace '^v', ''
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version must be semantic version X.Y.Z. Got: $version"
+          }
+          if ($tagName -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Tag must look like vX.Y.Z. Got: $tagName"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag_name=$tagName" >> $env:GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Restore signing certificate
+        run: |
+          if (-not "${{ secrets.HOMEGUARD_SIGN_CERT_BASE64 }}") {
+            throw "Missing HOMEGUARD_SIGN_CERT_BASE64 repository secret. Store the GreyNOC PFX as base64."
+          }
+          if (-not "${{ secrets.HOMEGUARD_SIGN_CERT_PASSWORD }}") {
+            throw "Missing HOMEGUARD_SIGN_CERT_PASSWORD repository secret."
+          }
+          [IO.File]::WriteAllBytes($env:HOMEGUARD_SIGN_CERT_PATH, [Convert]::FromBase64String("${{ secrets.HOMEGUARD_SIGN_CERT_BASE64 }}"))
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,exe,tray]"
+          npm ci
+
+      - name: Run release gates
+        run: |
+          python -m unittest discover -s tests -v
+          python scripts\security_release_gate.py
+          npm audit --audit-level=high
+          if (Test-Path electron\smoke.js) { npm run smoke }
+
+      - name: Build signed installer and portable EXE
+        run: |
+          powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version "${{ steps.meta.outputs.version }}" -ExpectedPublisher GreyNOC
+          $portable = Get-ChildItem -Path dist\electron -Filter "HomeGuard-Portable-v${{ steps.meta.outputs.version }}*.exe" -File | Select-Object -First 1
+          if (-not $portable) {
+            throw "Portable EXE was not produced."
+          }
+          powershell -NoProfile -File scripts\sign_windows_artifact.ps1 -Path $portable.FullName -ExpectedPublisher GreyNOC
+          powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path $portable.FullName -ExpectedPublisher GreyNOC
+
+      - name: Prepare release assets
+        id: assets
+        run: |
+          $version = "${{ steps.meta.outputs.version }}"
+          $installer = "dist\installer\HomeGuard-Setup-v$version.exe"
+          $portable = (Get-ChildItem -Path dist\electron -Filter "HomeGuard-Portable-v$version*.exe" -File | Select-Object -First 1).FullName
+          if (-not (Test-Path $installer)) { throw "Missing installer: $installer" }
+          if (-not (Test-Path $portable)) { throw "Missing portable EXE: $portable" }
+          Get-FileHash -Algorithm SHA256 $installer, $portable | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content -Path dist\SHA256SUMS.txt
+          "installer=$installer" >> $env:GITHUB_OUTPUT
+          "portable=$portable" >> $env:GITHUB_OUTPUT
+          "checksums=dist\SHA256SUMS.txt" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.meta.outputs.tag_name }}"
+          $version = "${{ steps.meta.outputs.version }}"
+          git fetch --tags
+          if (-not (git tag --list $tag)) {
+            git tag $tag
+            git push origin $tag
+          }
+          gh release create $tag `
+            "${{ steps.assets.outputs.installer }}" `
+            "${{ steps.assets.outputs.portable }}" `
+            "${{ steps.assets.outputs.checksums }}" `
+            --title "HomeGuard v$version" `
+            --notes "Signed Windows release for HomeGuard v$version.`n`nAssets:`n- HomeGuard-Setup-v$version.exe signed installer`n- HomeGuard-Portable-v$version.exe portable executable`n- SHA256SUMS.txt checksums" `
+            --verify-tag
