@@ -37,8 +37,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#AppSource}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\GreyNOC HomeGuard"; Filename: "{app}\GreyNOC-HomeGuard.exe"
-Name: "{commondesktop}\GreyNOC HomeGuard"; Filename: "{app}\GreyNOC-HomeGuard.exe"; Tasks: desktopicon
+Name: "{group}\GreyNOC HomeGuard"; Filename: "{app}\HomeGuard.exe"
+Name: "{commondesktop}\GreyNOC HomeGuard"; Filename: "{app}\HomeGuard.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\GreyNOC-HomeGuard.exe"; Description: "Launch GreyNOC HomeGuard"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\HomeGuard.exe"; Description: "Launch GreyNOC HomeGuard"; Flags: nowait postinstall skipifsilent
