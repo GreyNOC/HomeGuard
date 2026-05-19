@@ -8,6 +8,8 @@
     return;
   }
 
+  const SEVERITY_RANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+
   function scrollChat() {
     chatMessages.scrollTop = chatMessages.scrollHeight;
   }
@@ -38,6 +40,24 @@
     return article;
   }
 
+  function replaceMessage(article, text) {
+    const card = article?.querySelector(".message-card");
+    if (!card) {
+      return addMessage("assistant", text);
+    }
+    card.textContent = "";
+    String(text || "")
+      .split("\n")
+      .filter((line) => line.trim().length)
+      .forEach((line) => {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = line;
+        card.appendChild(paragraph);
+      });
+    scrollChat();
+    return article;
+  }
+
   function clickAction(id) {
     const button = document.getElementById(id);
     if (button && !button.disabled) {
@@ -52,9 +72,11 @@
     chatInput.style.height = `${Math.min(chatInput.scrollHeight, 150)}px`;
   }
 
-  const severityRank = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+  function normalizedText(value) {
+    return String(value || "").toLowerCase();
+  }
 
-  const resistanceGroups = [
+  const RESISTANCE_GROUPS = [
     {
       key: "credential theft",
       terms: ["credential", "mimikatz", "gpp", "vault", "autologon", "lsass", "password", "minidump", "process_dumping"],
@@ -89,7 +111,7 @@
     },
   ];
 
-  function findingText(finding) {
+  function resistanceFindingText(finding) {
     return [
       finding.rule_id,
       finding.title,
@@ -105,14 +127,14 @@
   }
 
   function isResistanceFinding(finding) {
-    const text = findingText(finding);
+    const text = resistanceFindingText(finding);
     return /powersploit|mimikatz|privesc|alwaysinstallelevated|autologon|gpp|lsass|powershell|dll|service|shadow|ninjacopy|credential|surveillance|scheduled_task|path_hardening|defender|credential_guard|script_block/.test(text);
   }
 
   function highestSeverity(findings) {
     return findings
       .map((finding) => String(finding.severity || "info").toLowerCase())
-      .sort((a, b) => (severityRank[b] || 0) - (severityRank[a] || 0))[0] || "info";
+      .sort((a, b) => (SEVERITY_RANK[b] || 0) - (SEVERITY_RANK[a] || 0))[0] || "info";
   }
 
   function topFinding(findings) {
@@ -126,11 +148,11 @@
     const normalized = prompt.toLowerCase();
     let narrowed = findings;
     if (/alwaysinstallelevated|installer/.test(normalized)) {
-      narrowed = findings.filter((finding) => findingText(finding).includes("alwaysinstallelevated") || findingText(finding).includes("installer"));
+      narrowed = findings.filter((finding) => resistanceFindingText(finding).includes("alwaysinstallelevated") || resistanceFindingText(finding).includes("installer"));
     } else if (/mimikatz|credential|password|lsass/.test(normalized)) {
-      narrowed = findings.filter((finding) => resistanceGroups[0].terms.some((term) => findingText(finding).includes(term)));
+      narrowed = findings.filter((finding) => RESISTANCE_GROUPS[0].terms.some((term) => resistanceFindingText(finding).includes(term)));
     } else if (/system|privilege|elevation|harden first/.test(normalized)) {
-      narrowed = findings.filter((finding) => findingText(finding).match(/privesc|elevat|system|service|dll|scheduled_task|path_hardening|sensitive_privilege/));
+      narrowed = findings.filter((finding) => resistanceFindingText(finding).match(/privesc|elevat|system|service|dll|scheduled_task|path_hardening|sensitive_privilege/));
     }
 
     const source = narrowed.length ? narrowed : findings;
@@ -144,8 +166,8 @@
     const lines = [
       `I found ${source.length} relevant PowerSploit resistance finding(s). Highest severity: ${highestSeverity(source)}.`,
     ];
-    for (const group of resistanceGroups) {
-      const grouped = source.filter((finding) => group.terms.some((term) => findingText(finding).includes(term)));
+    for (const group of RESISTANCE_GROUPS) {
+      const grouped = source.filter((finding) => group.terms.some((term) => resistanceFindingText(finding).includes(term)));
       if (!grouped.length) {
         continue;
       }
@@ -160,80 +182,199 @@
     return /powersploit|mimikatz|privilege escalation|privesc|alwaysinstallelevated|system|harden first|resistance check|protect against/.test(normalized);
   }
 
-  function summarizeGeneralReport(report) {
-    const findings = Array.isArray(report.findings) ? report.findings.slice() : [];
-    if (!findings.length) {
-      return `The latest report is ${report.overall_risk || "clean"} with no findings. Run another scan after changes or if something on the network changes.`;
+  async function answerResistanceReport(prompt) {
+    const payload = await loadLatestReport();
+    if (!payload?.ok) {
+      return noReportMessage(payload?.message);
     }
-    const sorted = findings.sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0));
-    const lines = [
-      `Latest report: ${findings.length} finding(s), overall risk ${report.overall_risk || "unknown"}, score ${report.overall_score ?? 0}.`,
-    ];
-    sorted.slice(0, 3).forEach((finding, index) => {
-      const fix = Array.isArray(finding.recommended_actions) && finding.recommended_actions.length ? finding.recommended_actions[0] : "Review this finding first.";
-      lines.push(`${index + 1}. ${finding.title} (${finding.severity || "info"}): ${fix}`);
-    });
-    return lines.join("\n");
+    return summarizeResistanceReport(payload.report || {}, prompt);
   }
 
-  async function answerFromLatestReport(prompt) {
+  function findingRank(finding) {
+    const severity = SEVERITY_RANK[normalizedText(finding.severity)] || 0;
+    const score = Number(finding.risk_score || 0);
+    const confidence = Number(finding.confidence || 0);
+    return severity * 1000 + score * 10 + confidence;
+  }
+
+  function sortedFindings(report) {
+    return [...(Array.isArray(report?.findings) ? report.findings : [])].sort((a, b) => findingRank(b) - findingRank(a));
+  }
+
+  function formatFinding(finding, index = 1) {
+    const title = finding.title || finding.rule_id || "Security finding";
+    const severity = String(finding.severity || "info").toUpperCase();
+    const device = finding.device_name || finding.device_ip || "unknown device";
+    const score = Number(finding.risk_score || 0).toFixed(1);
+    return `${index}. ${title} — ${severity}, score ${score}, device: ${device}.`;
+  }
+
+  function findingActions(finding) {
+    const actions = Array.isArray(finding.recommended_actions) ? finding.recommended_actions : [];
+    return actions.slice(0, 3).map((action, index) => `   Fix ${index + 1}: ${action}`).join("\n");
+  }
+
+  function loadLatestReport() {
     if (!window.homeguard?.latestReport) {
-      addMessage("assistant", "Run a scan first so I can answer from the latest HomeGuard report.");
-      return;
+      return Promise.resolve({ ok: false, message: "This build does not expose latest report access yet." });
     }
-    const result = await window.homeguard.latestReport();
-    if (!result?.ok || !result.report) {
-      addMessage("assistant", result?.message || "Run a scan first so I can answer from the latest HomeGuard report.");
-      return;
+    return window.homeguard.latestReport();
+  }
+
+  function noReportMessage(message) {
+    return `${message || "No HomeGuard report is available yet."}\n\nRun a scan first, then ask me what to fix first, explain my latest report, or show risky devices.`;
+  }
+
+  async function answerLatestReport() {
+    const payload = await loadLatestReport();
+    if (!payload?.ok) {
+      return noReportMessage(payload?.message);
     }
-    const normalized = prompt.toLowerCase();
-    addMessage("assistant", isResistancePrompt(normalized) ? summarizeResistanceReport(result.report, prompt) : summarizeGeneralReport(result.report));
+    const report = payload.report || {};
+    const findings = sortedFindings(report);
+    const top = findings.slice(0, 3).map(formatFinding).join("\n");
+    const nextSteps = Array.isArray(report.next_steps) ? report.next_steps.slice(0, 3) : [];
+    return [
+      `Latest HomeGuard report: ${report.overall_risk || "unknown"} risk, score ${Number(report.overall_score || 0).toFixed(1)}.`,
+      `Devices seen: ${report.device_count || 0}. Findings: ${report.finding_count || findings.length}.`,
+      report.summary ? `Summary: ${report.summary}` : "",
+      findings.length ? `Top findings:\n${top}` : "No findings were reported in the latest scan.",
+      nextSteps.length ? `Recommended next steps:\n${nextSteps.map((step, index) => `${index + 1}. ${step}`).join("\n")}` : "",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  async function answerFixFirst() {
+    const payload = await loadLatestReport();
+    if (!payload?.ok) {
+      return noReportMessage(payload?.message);
+    }
+    const report = payload.report || {};
+    const findings = sortedFindings(report);
+    if (!findings.length) {
+      return `The latest report shows no active findings. Overall risk is ${report.overall_risk || "unknown"}. Keep definitions updated and scan again after adding new devices.`;
+    }
+    const top = findings[0];
+    const actions = findingActions(top);
+    return [
+      "Fix this first:",
+      formatFinding(top, 1),
+      top.plain_english ? `Why it matters: ${top.plain_english}` : "",
+      actions || "Recommended action: Review this finding in the report and remediate the exposed service or device configuration.",
+      findings.length > 1 ? `After that, handle these next:\n${findings.slice(1, 4).map(formatFinding).join("\n")}` : "",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  async function answerRiskyDevices() {
+    const payload = await loadLatestReport();
+    if (!payload?.ok) {
+      return noReportMessage(payload?.message);
+    }
+    const findings = sortedFindings(payload.report || {});
+    if (!findings.length) {
+      return "I do not see risky devices in the latest report. Run an active scan if you want HomeGuard to check bounded private-network services more deeply.";
+    }
+    const byDevice = new Map();
+    for (const finding of findings) {
+      const key = finding.device_ip || finding.device_name || "unknown device";
+      if (!byDevice.has(key)) {
+        byDevice.set(key, []);
+      }
+      byDevice.get(key).push(finding);
+    }
+    const rows = [...byDevice.entries()].slice(0, 6).map(([device, deviceFindings], index) => {
+      const top = deviceFindings[0];
+      return `${index + 1}. ${device}: ${deviceFindings.length} finding(s). Highest: ${top.title || top.rule_id || "finding"} (${String(top.severity || "info").toUpperCase()}).`;
+    });
+    return `Risky devices from the latest report:\n${rows.join("\n")}\n\nAsk me about one of those devices or say "what should I fix first" for the top priority.`;
+  }
+
+  async function answerPortOrDevice(prompt) {
+    const payload = await loadLatestReport();
+    if (!payload?.ok) {
+      return noReportMessage(payload?.message);
+    }
+    const report = payload.report || {};
+    const findings = sortedFindings(report);
+    const needle = normalizedText(prompt);
+    const tokens = needle.match(/[a-z0-9._:-]+/g) || [];
+    const matched = findings.filter((finding) => {
+      const haystack = normalizedText([
+        finding.title,
+        finding.rule_id,
+        finding.category,
+        finding.device_ip,
+        finding.device_name,
+        finding.plain_english,
+        JSON.stringify(finding.evidence || {}),
+      ].join(" "));
+      return tokens.some((token) => token.length >= 2 && haystack.includes(token));
+    });
+    const targetFindings = matched.length ? matched : findings.slice(0, 3);
+    if (!targetFindings.length) {
+      return "I do not see matching findings in the latest report. Try running a scan first, or ask about devices, risky services, or what to fix first.";
+    }
+    const lines = targetFindings.slice(0, 3).map((finding, index) => [
+      formatFinding(finding, index + 1),
+      finding.plain_english ? `   Why: ${finding.plain_english}` : "",
+      findingActions(finding),
+    ].filter(Boolean).join("\n"));
+    return `Here is what I found in the latest report:\n${lines.join("\n\n")}`;
+  }
+
+  function isScanCommand(normalized) {
+    return /\b(run|start|begin)\b.*\b(scan|network check)\b/.test(normalized)
+      || /\bscan\b.*\b(network|home|devices|lan)\b/.test(normalized)
+      || normalized === "scan";
   }
 
   async function respondToPrompt(prompt) {
-    const normalized = prompt.toLowerCase();
+    const normalized = normalizedText(prompt);
 
-    if (isResistancePrompt(normalized)) {
-      await answerFromLatestReport(prompt);
-      return;
-    }
-
-    if (/run|start|scan|check my network|local network/.test(normalized)) {
+    if (isScanCommand(normalized)) {
       const activeScan = document.getElementById("activeScan");
       addMessage("assistant", `Starting a HomeGuard scan now. ${activeScan?.checked ? "Active checks are enabled, so HomeGuard will use bounded private-network probing." : "Active checks are off, so this will use the gentler scan mode."}`);
       clickAction("scanButton");
       return;
     }
 
-    if (/update|definitions|cve|kev/.test(normalized)) {
+    if (/\b(update|refresh)\b.*\b(definitions|cve|kev|security data)\b/.test(normalized) || normalized === "update definitions") {
       addMessage("assistant", "Updating local CVE and KEV definitions now. I will show the status in the protection panel when it finishes.");
       clickAction("updateButton");
       return;
     }
 
-    if (/history|previous|past scan|old scan/.test(normalized)) {
+    if (/\b(history|previous scans|past scans|old scans)\b/.test(normalized)) {
       addMessage("assistant", "Opening scan history. Select a row to open the saved HTML, PDF, or report folder.");
       clickAction("historyButton");
       return;
     }
 
-    if (/device|devices|risky devices|unknown|trusted|quarantine/.test(normalized)) {
+    if (/\b(show|open|list)\b.*\b(device|devices)\b/.test(normalized)) {
       addMessage("assistant", "Opening the device view. This shows known devices, trust status, labels, and open ports from local scans.");
       clickAction("devicesTab");
       return;
     }
 
-    if (/report|explain|fix first|priority|recommend|what should i fix/.test(normalized)) {
-      await answerFromLatestReport(prompt);
-      return;
+    const thinking = addMessage("assistant", "Checking the latest HomeGuard report...");
+    try {
+      let answer;
+      if (isResistancePrompt(normalized)) {
+        answer = await answerResistanceReport(prompt);
+      } else if (/fix first|priority|what should i fix|recommend|next step|next steps/.test(normalized)) {
+        answer = await answerFixFirst();
+      } else if (/risky devices|suspicious devices|unknown devices|dangerous devices/.test(normalized)) {
+        answer = await answerRiskyDevices();
+      } else if (/report|summary|summarize|explain latest|latest scan|risk/.test(normalized)) {
+        answer = await answerLatestReport();
+      } else if (/rdp|3389|ssh|22|smb|445|telnet|23|ftp|21|vnc|5900|camera|router|printer|iot|port|open port|device/.test(normalized)) {
+        answer = await answerPortOrDevice(prompt);
+      } else {
+        answer = await answerLatestReport();
+      }
+      replaceMessage(thinking, answer);
+    } catch (error) {
+      replaceMessage(thinking, `I could not read the latest report safely. ${error.message || String(error)}`);
     }
-
-    if (/rdp|3389|ssh|22|camera|router|printer|iot|port|open port/.test(normalized)) {
-      addMessage("assistant", "Run a scan first, then open the latest report or ask what to fix first. I can summarize report findings by device, risk, and recommended action.");
-      return;
-    }
-
-    addMessage("assistant", "I can help with local HomeGuard actions: run a scan, update definitions, open devices, open history, or explain the latest report.");
   }
 
   chatForm.addEventListener("submit", (event) => {
