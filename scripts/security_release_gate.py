@@ -182,6 +182,11 @@ def _line_has_placeholder_secret(line: str) -> bool:
         return False
     if any(value in clean for value in PLACEHOLDER_SECRET_VALUES):
         return True
+    # GitHub Actions context references (${{ secrets.X }}, ${{ env.X }}, ${{ inputs.X }})
+    # are the correct, secure way to consume secrets in workflows. They are not
+    # committed credentials and must not trip the secret detector.
+    if "${{ secrets." in clean or "${{ env." in clean or "${{ inputs." in clean:
+        return True
     if any(marker in clean for marker in PLACEHOLDER_LINE_MARKERS):
         if any(token in clean for token in ("password", "secret", "token", "api_key", "api-key", "nvd_api_key")):
             return True

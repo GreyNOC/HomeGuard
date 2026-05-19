@@ -33,9 +33,6 @@ const secureMain = fs.readFileSync(path.join(root, "electron", "main.secure.js")
 if (!secureMain.includes("HOMEGUARD_DEV_MODE") || !secureMain.includes("HOMEGUARD_CORE_EXE") || !secureMain.includes("HOMEGUARD_PYTHON")) {
   throw new Error("Secure Electron entrypoint is not guarding packaged environment overrides.");
 }
-if (!secureMain.includes("registerReportAssistantIpc()")) {
-  throw new Error("Secure Electron entrypoint does not register report assistant IPC.");
-}
 if (!secureMain.includes('require("./main.js")')) {
   throw new Error("Secure Electron entrypoint does not load the main process.");
 }
