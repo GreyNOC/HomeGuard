@@ -46,6 +46,7 @@ TEXT_SUFFIXES = {
     ".yml",
 }
 AUDIT_EXCLUDE_DIRS = {
+    ".claude",
     ".git",
     ".mypy_cache",
     ".pytest_cache",
@@ -55,6 +56,7 @@ AUDIT_EXCLUDE_DIRS = {
     "build",
     "dist",
     "FInished Project",
+    "node_modules",
 }
 AUDIT_EXCLUDE_FILES = {
     f"{APP_NAME}.spec",

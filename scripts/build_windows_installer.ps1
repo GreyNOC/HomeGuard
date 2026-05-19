@@ -1,6 +1,10 @@
 param(
     [string]$Version = "",
-    [string]$ExpectedPublisher = "GreyNOC"
+    [string]$ExpectedPublisher = "GreyNOC",
+    # Build without Authenticode signing. Use only until GreyNOC has a
+    # code-signing certificate; unsigned installers trigger a Windows
+    # SmartScreen "unknown publisher" warning on download.
+    [switch]$Unsigned
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,10 +35,19 @@ if (-not $iscc) {
 
 $env:HOMEGUARD_RELEASE_VERSION = $Version
 $env:HOMEGUARD_REPO_ROOT = [string]$repo
-$env:HOMEGUARD_REQUIRE_SIGNING = "1"
+if ($Unsigned) {
+    Remove-Item Env:\HOMEGUARD_REQUIRE_SIGNING -ErrorAction SilentlyContinue
+    Write-Warning "Building UNSIGNED installer. Windows SmartScreen will warn users on download."
+} else {
+    $env:HOMEGUARD_REQUIRE_SIGNING = "1"
+}
 
-Write-Host "Building signed application executable..."
-python (Join-Path $repo "scripts\build_electron.py") --no-version-bump --require-signing
+Write-Host "Building application executable..."
+$buildArgs = @((Join-Path $repo "scripts\build_electron.py"), "--no-version-bump")
+if (-not $Unsigned) {
+    $buildArgs += "--require-signing"
+}
+python @buildArgs
 
 Write-Host "Building setup installer with Inno Setup..."
 & $iscc (Join-Path $repo "installer\homeguard.iss")
@@ -47,10 +60,14 @@ if (-not (Test-Path -LiteralPath $artifact)) {
     throw "Expected installer was not produced: $artifact"
 }
 
-Write-Host "Signing setup installer..."
-& (Join-Path $repo "scripts\sign_windows_artifact.ps1") -Path $artifact -ExpectedPublisher $ExpectedPublisher
+if ($Unsigned) {
+    Write-Host "Unsigned V1 installer ready: $artifact"
+} else {
+    Write-Host "Signing setup installer..."
+    & (Join-Path $repo "scripts\sign_windows_artifact.ps1") -Path $artifact -ExpectedPublisher $ExpectedPublisher
 
-Write-Host "Verifying setup installer signature..."
-& (Join-Path $repo "scripts\verify_windows_signature.ps1") -Path $artifact -ExpectedPublisher $ExpectedPublisher
+    Write-Host "Verifying setup installer signature..."
+    & (Join-Path $repo "scripts\verify_windows_signature.ps1") -Path $artifact -ExpectedPublisher $ExpectedPublisher
 
-Write-Host "Signed V1 installer ready: $artifact"
+    Write-Host "Signed V1 installer ready: $artifact"
+}
