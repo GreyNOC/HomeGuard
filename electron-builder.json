@@ -1,6 +1,7 @@
 {
   "appId": "com.greynoc.homeguard",
   "productName": "HomeGuard",
+  "artifactName": "${productName}-Portable-v${version}.${ext}",
   "asar": false,
   "npmRebuild": false,
   "directories": {
@@ -29,6 +30,12 @@
     "target": [
       {
         "target": "dir",
+        "arch": [
+          "x64"
+        ]
+      },
+      {
+        "target": "portable",
         "arch": [
           "x64"
         ]
