@@ -22,6 +22,7 @@ const reportMeta = $("reportMeta");
 const reportFrame = $("reportFrame");
 const scanOrb = document.querySelector(".scan-orb");
 const scanIndicatorLabel = $("scanIndicatorLabel");
+const scanOrb3D = typeof window.initScanOrb3D === "function" ? window.initScanOrb3D(scanOrb) : null;
 
 const tabs = {
   protection: $("protectionTab"),
@@ -118,6 +119,7 @@ function updateScanIndicator() {
   const active = isScanIndicatorActive();
   scanOrb.classList.toggle("is-active", active);
   scanOrb.setAttribute("aria-label", active ? "Local continuous scan is active" : "Local continuous scan is idle");
+  if (scanOrb3D) scanOrb3D.setActive(active);
   scanIndicatorLabel.textContent = scanRunning ? "Scanning now" : activeScan.checked ? "Active scan on" : "Active scan off";
   scanIndicatorLabel.classList.toggle("is-active", active);
   window.homeguard.setScanIndicator({ activeRequested: activeScan.checked }).catch(() => {});
