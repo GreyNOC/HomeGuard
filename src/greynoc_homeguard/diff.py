@@ -286,7 +286,11 @@ def load_previous_report(json_path: str | Path | None) -> dict[str, Any] | None:
 
 
 def render_summary(delta: dict[str, Any]) -> str:
-    """One-line human summary for the CLI / status bar."""
+    """One-line human summary for the CLI / status bar.
+
+    Keep this ASCII-only because it is printed through Windows cmd/npm/Electron
+    launch paths where Python stdout may use a legacy code page.
+    """
 
     if not delta or not delta.get("available"):
         return ""
@@ -320,11 +324,11 @@ def render_summary(delta: dict[str, Any]) -> str:
     direction = str(risk.get("direction") or "")
     if direction == "worsened":
         bits.append(
-            f"risk worsened {risk.get('previous_risk') or '?'} → {risk.get('current_risk') or '?'}"
+            f"risk worsened {risk.get('previous_risk') or '?'} -> {risk.get('current_risk') or '?'}"
         )
     elif direction == "improved":
         bits.append(
-            f"risk improved {risk.get('previous_risk') or '?'} → {risk.get('current_risk') or '?'}"
+            f"risk improved {risk.get('previous_risk') or '?'} -> {risk.get('current_risk') or '?'}"
         )
     if not bits:
         return "No changes since the previous scan."
