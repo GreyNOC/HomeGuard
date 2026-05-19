@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("homeguard", {
   setScanIndicator: (state) => ipcRenderer.invoke("homeguard:scan-indicator", state),
   updateDefinitions: () => ipcRenderer.invoke("homeguard:update-definitions"),
   definitionsStatus: () => ipcRenderer.invoke("homeguard:definitions-status"),
+  latestReport: () => ipcRenderer.invoke("homeguard:latest-report"),
   history: () => ipcRenderer.invoke("homeguard:history"),
   devices: () => ipcRenderer.invoke("homeguard:devices"),
   schedule: () => ipcRenderer.invoke("homeguard:schedule"),

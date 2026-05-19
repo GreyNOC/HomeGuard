@@ -7,10 +7,14 @@ const required = [
   "package.json",
   "electron/main.secure.js",
   "electron/main.js",
+  "electron/report_assistant_ipc.js",
   "electron/preload.js",
   "electron/renderer/index.html",
   "electron/renderer/styles.css",
   "electron/renderer/renderer.js",
+  "electron/renderer/chat-assistant.js",
+  "src/greynoc_homeguard/endpoint_abuse_signatures.py",
+  "src/greynoc_homeguard/windows_privesc_audit.py",
 ];
 
 for (const relativePath of required) {
@@ -66,6 +70,10 @@ if (!main.includes("bundledHomeGuardExecutable") || !main.includes("process.reso
   throw new Error("Packaged Electron builds are not wired to the bundled HomeGuard backend.");
 }
 
+if (!main.includes("registerReportAssistantIpc")) {
+  throw new Error("Latest-report assistant IPC is not registered by the main process.");
+}
+
 for (const channel of [
   "homeguard:scan",
   "homeguard:scan-indicator",
@@ -95,6 +103,7 @@ for (const channel of [
 const preload = fs.readFileSync(path.join(root, "electron", "preload.js"), "utf8");
 for (const apiName of [
   "devices",
+  "latestReport",
   "setScanIndicator",
   "schedule",
   "setDeviceTrust",
@@ -115,12 +124,17 @@ for (const apiName of [
   }
 }
 
+const reportAssistant = fs.readFileSync(path.join(root, "electron", "report_assistant_ipc.js"), "utf8");
+if (!reportAssistant.includes("homeguard:latest-report") || !reportAssistant.includes("summarizeReport")) {
+  throw new Error("Latest-report assistant IPC handler is missing.");
+}
+
 const css = fs.readFileSync(path.join(root, "electron", "renderer", "styles.css"), "utf8");
-if (!css.includes("--color-app-bg: #05070a")) {
+if (!css.includes("--app-bg: #0b0f14") || !css.includes("background: var(--app-bg)")) {
   throw new Error("Renderer app background is not the dark GreyNOC theme.");
 }
 
-if (!css.includes("--color-blue: #174ea6") || !css.includes("--color-scan: #ef233c")) {
+if (!css.includes("--accent: #2f81f7") || !css.includes("--scan: #ef233c")) {
   throw new Error("Renderer buttons are not using the original HomeGuard button colors.");
 }
 
@@ -141,6 +155,31 @@ if (!renderer.includes("Active scan on") || !renderer.includes("Scanning now")) 
 }
 if (renderer.includes("devicesTableBody.innerHTML") || renderer.includes("historyTableBody.innerHTML")) {
   throw new Error("Renderer data tables must be built with DOM nodes instead of HTML strings.");
+}
+
+const chatAssistant = fs.readFileSync(path.join(root, "electron", "renderer", "chat-assistant.js"), "utf8");
+if (!chatAssistant.includes("latestReport") || !chatAssistant.includes("PowerSploit resistance")) {
+  throw new Error("Report-aware PowerSploit resistance assistant wiring is missing.");
+}
+for (const placeholder of ["next phase", "upcoming command router", "lorem ipsum", "mock data"]) {
+  if (chatAssistant.toLowerCase().includes(placeholder)) {
+    throw new Error(`Assistant still contains placeholder text: ${placeholder}`);
+  }
+}
+
+const endpointSignatures = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "endpoint_abuse_signatures.py"), "utf8");
+if (!endpointSignatures.includes("Invoke-Mimikatz") || !endpointSignatures.includes("destructive_or_mayhem_behavior")) {
+  throw new Error("Endpoint abuse signature pack does not include PowerSploit resistance coverage.");
+}
+
+const privescAudit = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "windows_privesc_audit.py"), "utf8");
+if (!privescAudit.includes("AlwaysInstallElevated") || !privescAudit.includes("run_windows_privesc_audit")) {
+  throw new Error("Windows privilege escalation audit module is missing expected checks.");
+}
+
+const powersploitTests = fs.readFileSync(path.join(root, "tests", "test_endpoint_abuse_signatures.py"), "utf8");
+if (!powersploitTests.includes("POWERSPLOIT_FUNCTION_NAMES") || !powersploitTests.includes("downloaded_content")) {
+  throw new Error("Tests do not reference PowerSploit resistance signature coverage.");
 }
 
 const scanRunner = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "scan_runner.py"), "utf8");

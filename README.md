@@ -34,6 +34,7 @@ This repo is built as a bounded local discovery and review tool with detection r
 - Possible-intrusion findings for unknown devices with remote-access exposure or clustered admin services.
 - Active scan checks a bounded set of private/local ports for remote-control, unsafe sharing, camera, debug bridge, and other unusual-service indicators.
 - One-click fix option for local findings: HomeGuard can close or reopen inbound TCP ports on the computer running the app using reversible Windows Firewall rules.
+- Defensive PowerSploit resistance checks: static endpoint artifact detection plus passive Windows privilege-escalation hardening review.
 - Unit tests.
 
 
@@ -50,6 +51,8 @@ By default it uses passive discovery. Active probing is opt-in, limited to priva
 CVE, KEV, possible-intrusion, unusual-service, and endpoint findings are indicators for review, not proof of compromise. A home network scan usually cannot prove the exact firmware/software version running on a device, and it is not a replacement for full endpoint protection on the device itself.
 
 HomeGuard can only close/reopen ports on the local computer where it is running. For another device on the network, it will guide you to disable the service on that device, block it in the router, or quarantine it in HomeGuard.
+
+PowerSploit resistance is detection, reporting, and hardening guidance only. HomeGuard does not run offensive tools, generate payloads, dump credentials, bypass security controls, or exploit Windows misconfigurations. See `docs/POWERSPOIT_RESISTANCE.md` for the passive checks and hardening checklist.
 
 ## Windows quick start
 
@@ -343,6 +346,7 @@ src/greynoc_homeguard/
 docs/
   SECURITY.md
   SECURITY_DEFINITIONS.md
+  POWERSPOIT_RESISTANCE.md
   PRODUCTION_READINESS.md
   release/
     BUILD_AND_SIGNING.md

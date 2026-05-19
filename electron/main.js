@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const zlib = require("zlib");
+const { registerReportAssistantIpc } = require("./report_assistant_ipc");
 
 const repoRoot = path.resolve(__dirname, "..");
 let mainWindow = null;
@@ -884,6 +885,8 @@ ipcMain.handle("homeguard:show-item", async (_event, targetPath) => {
   shell.showItemInFolder(path.resolve(safeTarget));
   return { ok: true };
 });
+
+registerReportAssistantIpc();
 
 app.whenReady().then(createWindow);
 
