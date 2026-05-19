@@ -1,4 +1,5 @@
 const { app } = require("electron");
+const { registerReportAssistantIpc } = require("./report_assistant_ipc");
 
 function developmentOverrideAllowed() {
   const value = String(process.env.HOMEGUARD_DEV_MODE || "").trim().toLowerCase();
@@ -20,4 +21,5 @@ function removePackagedExecutionOverrides() {
 }
 
 removePackagedExecutionOverrides();
+registerReportAssistantIpc();
 require("./main.js");
