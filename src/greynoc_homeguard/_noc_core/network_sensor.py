@@ -6,7 +6,14 @@ import re
 import socket
 import subprocess
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
+
+try:  # Python 3.11+
+    from datetime import UTC
+except ImportError:  # Python 3.10 — fall back to the equivalent timezone.utc
+    from datetime import timezone
+
+    UTC = timezone.utc
 from typing import Any
 
 try:  # pragma: no cover - optional in packaged runtimes

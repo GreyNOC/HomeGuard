@@ -10,7 +10,14 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
+
+try:  # Python 3.11+
+    from datetime import UTC
+except ImportError:  # Python 3.10 — fall back to the equivalent timezone.utc
+    from datetime import timezone
+
+    UTC = timezone.utc
 from typing import Any
 
 from .network_sensor import (
