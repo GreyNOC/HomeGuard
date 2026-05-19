@@ -8,9 +8,11 @@ const required = [
   "electron/main.secure.js",
   "electron/main.js",
   "electron/preload.js",
+  "electron/report_assistant_ipc.js",
   "electron/renderer/index.html",
   "electron/renderer/styles.css",
   "electron/renderer/renderer.js",
+  "electron/renderer/chat-assistant.js",
 ];
 
 for (const relativePath of required) {
@@ -29,8 +31,22 @@ const secureMain = fs.readFileSync(path.join(root, "electron", "main.secure.js")
 if (!secureMain.includes("HOMEGUARD_DEV_MODE") || !secureMain.includes("HOMEGUARD_CORE_EXE") || !secureMain.includes("HOMEGUARD_PYTHON")) {
   throw new Error("Secure Electron entrypoint is not guarding packaged environment overrides.");
 }
+if (!secureMain.includes("registerReportAssistantIpc()")) {
+  throw new Error("Secure Electron entrypoint does not register report assistant IPC.");
+}
 if (!secureMain.includes('require("./main.js")')) {
   throw new Error("Secure Electron entrypoint does not load the main process.");
+}
+
+const reportAssistant = fs.readFileSync(path.join(root, "electron", "report_assistant_ipc.js"), "utf8");
+if (!reportAssistant.includes("homeguard:latest-report")) {
+  throw new Error("Report assistant IPC channel is missing.");
+}
+if (!reportAssistant.includes("isAllowedReportJsonPath") || !reportAssistant.includes('appDataPath("reports")')) {
+  throw new Error("Report assistant IPC does not restrict latest-report JSON to HomeGuard reports.");
+}
+if (!reportAssistant.includes("scrubObject") || !reportAssistant.includes("summarizeReport")) {
+  throw new Error("Report assistant IPC is not sanitizing and summarizing reports.");
 }
 
 const main = fs.readFileSync(path.join(root, "electron", "main.js"), "utf8");
@@ -94,6 +110,7 @@ for (const channel of [
 
 const preload = fs.readFileSync(path.join(root, "electron", "preload.js"), "utf8");
 for (const apiName of [
+  "latestReport",
   "devices",
   "setScanIndicator",
   "schedule",
@@ -115,13 +132,18 @@ for (const apiName of [
   }
 }
 
-const css = fs.readFileSync(path.join(root, "electron", "renderer", "styles.css"), "utf8");
-if (!css.includes("--color-app-bg: #05070a")) {
-  throw new Error("Renderer app background is not the dark GreyNOC theme.");
+const indexHtml = fs.readFileSync(path.join(root, "electron", "renderer", "index.html"), "utf8");
+if (!indexHtml.includes("chatMessages") || !indexHtml.includes("chatForm") || !indexHtml.includes("chat-assistant.js")) {
+  throw new Error("Renderer HTML is not wired as a chat assistant surface.");
 }
 
-if (!css.includes("--color-blue: #174ea6") || !css.includes("--color-scan: #ef233c")) {
-  throw new Error("Renderer buttons are not using the original HomeGuard button colors.");
+const css = fs.readFileSync(path.join(root, "electron", "renderer", "styles.css"), "utf8");
+if (!css.includes("--app-bg") || !css.includes("--accent") || !css.includes("--scan")) {
+  throw new Error("Renderer app background is not the chat-first GreyNOC theme.");
+}
+
+if (!css.includes(".chat-page") || !css.includes(".chat-composer") || !css.includes(".message-card")) {
+  throw new Error("Renderer chat layout styles are missing.");
 }
 
 if (css.includes("background: white")) {
@@ -141,6 +163,24 @@ if (!renderer.includes("Active scan on") || !renderer.includes("Scanning now")) 
 }
 if (renderer.includes("devicesTableBody.innerHTML") || renderer.includes("historyTableBody.innerHTML")) {
   throw new Error("Renderer data tables must be built with DOM nodes instead of HTML strings.");
+}
+
+const chatAssistant = fs.readFileSync(path.join(root, "electron", "renderer", "chat-assistant.js"), "utf8");
+for (const expected of [
+  "latestReport",
+  "answerFixFirst",
+  "answerRiskyDevices",
+  "answerPortOrDevice",
+  "sortedFindings",
+  "findingActions",
+  "isScanCommand",
+]) {
+  if (!chatAssistant.includes(expected)) {
+    throw new Error(`Chat assistant is missing report-aware behavior: ${expected}`);
+  }
+}
+if (chatAssistant.includes("The next phase will connect this chat directly to report JSON")) {
+  throw new Error("Chat assistant still contains placeholder report-answer text.");
 }
 
 const scanRunner = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "scan_runner.py"), "utf8");
