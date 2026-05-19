@@ -86,8 +86,18 @@
     output.scrollTop = output.scrollHeight;
   }
 
+  function recentOutputError() {
+    const lines = String(output?.textContent || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const useful = lines.filter((line) => !/^\[\d/.test(line) || /error:|traceback|exception|failed|unicode|permission|denied|no such|cannot|could not/i.test(line));
+    return (useful.length ? useful : lines).slice(-8).join("\n");
+  }
+
   function phaseFromMessage(message) {
     const text = String(message || "").toLowerCase();
+    if (/error|failed|stopped/.test(text)) return "Error";
     if (/prepar|queued/.test(text)) return "Preparing scan";
     if (/interface|arp|neighbor|ping|tcp|service|network scan/.test(text)) return "Discovering local devices";
     if (/found \d+ local device/.test(text)) return "Reviewing discovered devices";
@@ -100,18 +110,21 @@
     return "Working";
   }
 
-  function updateChatCard(done = false) {
+  function updateChatCard(done = false, failed = false) {
     if (!scanState?.nodes) {
       return;
     }
     const elapsed = elapsedLabel(scanState.startedAt);
     const activeMode = scanState.active ? "active bounded probing" : "passive local discovery";
     const probeMode = scanState.probeAll ? "all bounded hosts" : "standard host set";
-    scanState.nodes.title.textContent = done ? "HomeGuard scan complete" : "HomeGuard is scanning";
-    scanState.nodes.summary.textContent = done
-      ? `Finished after ${elapsed}. Final stage: ${scanState.phase}.`
-      : `Elapsed ${elapsed}. Mode: ${activeMode}; target scope: ${probeMode}. Current stage: ${scanState.phase}.`;
+    scanState.nodes.title.textContent = failed ? "HomeGuard scan stopped" : done ? "HomeGuard scan complete" : "HomeGuard is scanning";
+    scanState.nodes.summary.textContent = failed
+      ? `Stopped after ${elapsed}. Last stage: ${scanState.phase}. The latest error is shown below.`
+      : done
+        ? `Finished after ${elapsed}. Final stage: ${scanState.phase}.`
+        : `Elapsed ${elapsed}. Mode: ${activeMode}; target scope: ${probeMode}. Current stage: ${scanState.phase}.`;
     scanState.nodes.log.textContent = scanState.lines.slice(-MAX_CHAT_LINES).join("\n");
+    scanState.nodes.article.classList.toggle("scan-progress-failed", failed);
     scrollChat();
   }
 
@@ -132,7 +145,7 @@
     scanState.lines = scanState.lines.slice(-64);
     appendOutputLine(line);
     setStatus(clean);
-    updateChatCard(false);
+    updateChatCard(false, scanState.phase === "Error");
   }
 
   function heartbeat() {
@@ -146,12 +159,12 @@
     });
   }
 
-  function stopScanProgress(reason = "Reports are ready.") {
+  function stopScanProgress(reason = "Reports are ready.", failed = false) {
     if (!scanState) {
       return;
     }
     appendScanLine(reason, { heartbeat: true });
-    updateChatCard(true);
+    updateChatCard(true, failed);
     clearInterval(heartbeatTimer);
     clearInterval(stopWatcher);
     heartbeatTimer = null;
@@ -180,7 +193,13 @@
       const complete = /scan complete/.test(status) || /reports are ready|final scan output/.test(text);
       const failed = /scan failed/.test(status);
       if (complete || failed) {
-        stopScanProgress(failed ? "Scan stopped with an error. Review the activity output." : "Reports are ready.");
+        const detail = failed ? recentOutputError() : "";
+        stopScanProgress(
+          failed
+            ? `Scan stopped with an error. ${detail ? `Latest error: ${detail}` : "No detailed error was captured."}`
+            : "Reports are ready.",
+          failed,
+        );
       }
     }, 1000);
   }
