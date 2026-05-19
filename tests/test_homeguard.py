@@ -125,6 +125,55 @@ Internet Address                              Physical Address   Type
         self.assertNotIn("192.168.50.2", targets)
 
 
+class NocCoreDiscoveryTests(unittest.TestCase):
+    """Covers the vendored saturn discovery engine surface added in v1.1."""
+
+    def test_passive_discover_local_network_uses_safe_defaults(self):
+        from greynoc_homeguard.network import (
+            DiscoveryOptions,
+            discover_local_network,
+            discovery_device_to_device,
+            recompute_confidence,
+        )
+
+        # No active probes by default; engine bails fast on private CIDR
+        # without external IO so the test stays hermetic.
+        result = discover_local_network("192.168.99.0/24", max_hosts=8)
+        self.assertIsNotNone(result)
+        self.assertTrue(hasattr(result, "devices"))
+        # Inspecting DiscoveryOptions defaults via re-export is the contract
+        # the chat assistant and future map UI will rely on.
+        opts = DiscoveryOptions()
+        self.assertTrue(opts.enable_arp_probe)  # saturn upstream default
+        self.assertFalse(opts.allow_public)
+        self.assertFalse(opts.allow_large_subnet)
+
+        # Adapter converts a noc_core-shaped dict into a HomeGuard Device.
+        device = discovery_device_to_device(
+            {
+                "ip": "192.168.1.50",
+                "mac_address": "B8:78:2E:11:22:33",
+                "hostname": "wyze-cam",
+                "open_ports": [80, 554],
+                "metadata": {"discovery_methods": ["arp", "mdns"]},
+            }
+        )
+        self.assertEqual(device.ip, "192.168.1.50")
+        self.assertEqual(device.mac_address, "b8:78:2e:11:22:33")
+        self.assertEqual(device.vendor, "Wyze")
+        self.assertEqual(sorted(device.open_ports), [80, 554])
+
+        # confidence_score reads the merged-device evidence shape.
+        score = recompute_confidence(
+            {
+                "mac_address": "b8:78:2e:11:22:33",
+                "discovery_methods": ["arp", "mdns", "tcp"],
+            }
+        )
+        self.assertGreater(score, 0.0)
+        self.assertLessEqual(score, 0.99)
+
+
 class DetectionEngineTests(unittest.TestCase):
     def test_engine_flags_telnet(self):
         device = Device(ip="192.168.1.40", hostname="camera", open_ports=[23])

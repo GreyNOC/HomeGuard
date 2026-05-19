@@ -9,6 +9,21 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
+from ._noc_core import discovery as _noc_discovery
+from ._noc_core import map_accuracy as _noc_map_accuracy
+from ._noc_core import network_discovery as _noc_net_discovery
+from ._noc_core.discovery import (
+    DiscoveryDevice,
+    DiscoveryOptions,
+    DiscoveryResult,
+    guess_device_type,
+)
+from ._noc_core.map_accuracy import (
+    distinct_method_categories,
+    is_randomized_mac,
+    recompute_confidence,
+    source_count,
+)
 from .models import Device
 
 
@@ -541,3 +556,66 @@ def discover_lan_hosts(config: NetworkSensorConfig | None = None) -> list[Device
                     continue
         hosts.extend(active_results)
     return _merge_hosts(hosts)
+
+
+def discover_local_network(
+    network_cidr: str | None = None,
+    *,
+    active: bool = False,
+    max_hosts: int = 128,
+    cancel_event: Any = None,
+) -> DiscoveryResult:
+    """Run the multi-vector discovery engine vendored from GreyNOC/saturn.
+
+    HomeGuard-safe wrapper: passive_only by default, no public/large-subnet
+    probing, no radio or bluetooth scanning. Set ``active=True`` to opt into
+    ARP / ICMP / TCP probes — those still go through the engine's internal
+    boundary gate (target.is_private + target.is_loopback + target.is_link_local)
+    and active_probe_allowed() check, so a misconfigured caller can never
+    accidentally reach off-LAN addresses.
+
+    Returns the rich DiscoveryResult with per-device confidence scores,
+    discovery method evidence, and device-type heuristics — richer than
+    discover_lan_hosts(), which stays the default scan path.
+    """
+    options = DiscoveryOptions(
+        passive_only=not active,
+        enable_arp_probe=active,
+        enable_icmp=active,
+        enable_tcp=active,
+        enable_mdns_ssdp=True,
+        enable_radio=False,
+        enable_bluetooth=False,
+        allow_public=False,
+        allow_large_subnet=False,
+        max_hosts=max_hosts,
+        cancel_event=cancel_event,
+    )
+    return _noc_discovery.discover_local_network(network_cidr, options)
+
+
+def confidence_score(device: dict[str, Any]) -> float:
+    """Recompute the 0.05..0.99 confidence score from a merged device dict."""
+    return _noc_map_accuracy.recompute_confidence(device)
+
+
+def discovery_device_to_device(host: DiscoveryDevice | dict[str, Any]) -> Device:
+    """Convert a saturn DiscoveryDevice / dict into HomeGuard's Device model."""
+    if isinstance(host, DiscoveryDevice):
+        data = host.as_dict() if hasattr(host, "as_dict") else host.__dict__
+    else:
+        data = host
+    mac_raw = data.get("mac_address") or data.get("mac") or ""
+    mac = normalize_mac(mac_raw) if mac_raw else ""
+    vendor = vendor_from_mac(mac) if mac else data.get("vendor", "")
+    return Device(
+        ip=data.get("ip", ""),
+        mac_address=mac,
+        hostname=data.get("hostname", ""),
+        interface=data.get("interface", ""),
+        source=data.get("source", "discovery"),
+        status=data.get("status", "observed"),
+        open_ports=list(data.get("open_ports") or data.get("ports") or []),
+        vendor=vendor,
+        metadata=dict(data.get("metadata") or {}),
+    )

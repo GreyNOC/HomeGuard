@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 - Discovery Engine Release
+
+- Vendored the GreyNOC saturn `noc_core` multi-vector discovery engine (discovery.py, network_discovery.py, network_sensor.py, map_accuracy.py) into a private `_noc_core` subpackage under `src/greynoc_homeguard/`. Pure stdlib (optional psutil), no new HomeGuard runtime dependencies.
+- Added `discover_local_network()` to `greynoc_homeguard.network` — a HomeGuard-safe wrapper around the saturn engine with passive_only defaults, no public/large-subnet probing, and no radio/bluetooth scanning. The engine's internal `target.is_private` / `target.is_loopback` / `target.is_link_local` gates remain in force.
+- Re-exported `DiscoveryDevice`, `DiscoveryOptions`, `DiscoveryResult`, `guess_device_type`, `recompute_confidence`, `is_randomized_mac`, `source_count`, and `distinct_method_categories` from `greynoc_homeguard.network` so callers can opt into the richer engine surface alongside the existing scan flow.
+- Added `discovery_device_to_device()` adapter that normalizes saturn-shaped device dicts into HomeGuard's `Device` model, including MAC normalization and the home-IoT-focused `COMMON_VENDOR_PREFIXES` OUI lookup.
+- Kept the existing conservative `discover_lan_hosts()` scan path untouched — the saturn engine is an additive capability, not a replacement.
+- Replaced the CSS pseudo-element scan orb with a real Three.js WebGL scene: faceted icosahedron core with shifting emissive color, additive wireframe lattice, multi-ring synapse particles, and synapse-flash line streaks. Idle vs. active is smoothed via a single intensity value driving rotation speed, glow, and synapse flash rate. Vendored Three.js r149 UMD locally to satisfy the renderer's strict script-src CSP.
+- Tracked the in-flight requestAnimationFrame id on the 3D scan orb so a paused (document-hidden) callback can never stack with a freshly scheduled one on restore, preventing doubled render loops on hide/show cycles.
+- Dropped a stale Electron smoke assertion that contradicted the IPC dedup fix in 39b8ef9.
+- Added a `${{ secrets.X }}` / `${{ env.X }}` / `${{ inputs.X }}` carve-out to `security_release_gate.py` so the secret detector no longer flags correct GitHub Actions context references in workflows.
+
 ## 1.0.4 - PowerSploit Resistance Release
 
 - Added defensive PowerSploit-style endpoint artifact signatures for process command lines, downloaded scripts, startup entries, and sampled memory strings.
