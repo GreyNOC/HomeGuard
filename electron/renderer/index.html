@@ -13,7 +13,8 @@
   <body>
     <div class="titlebar">
       <div class="titlebar-brand" aria-label="HomeGuard">
-        <span class="titlebar-mark">GN</span>
+        <span class="brand-mark">GN</span>
+        <span>HomeGuard</span>
       </div>
       <div class="window-controls" aria-label="Window controls">
         <button id="windowMinimize" type="button" aria-label="Minimize">-</button>
@@ -22,172 +23,200 @@
       </div>
     </div>
 
-    <header class="hero">
-      <div class="hero-copy">
-        <h1>HomeGuard</h1>
-        <p id="statusText">Ready. Passive scans use local network observations; active checks run only when you enable them.</p>
-      </div>
-    </header>
-
-    <main>
-      <nav class="tabs" aria-label="HomeGuard sections">
-        <button class="tab active" id="protectionTab" type="button">Protection</button>
-        <button class="tab" id="devicesTab" type="button">Devices</button>
-        <button class="tab" id="historyTab" type="button">History</button>
-        <button class="tab" id="scheduleTab" type="button">Schedule</button>
-        <button class="tab" id="logsTab" type="button">Logs</button>
-      </nav>
-
-      <section id="protectionPage" class="page active-page">
-        <section class="summary">
-          <article class="metric network-protection-metric">
-            <div class="metric-copy">
-              <small>Network Risk</small>
-              <b id="riskValue">Not scanned</b>
-              <span>Protection status appears after the first scan</span>
-            </div>
-            <div class="scan-indicator">
-              <div class="scan-orb" aria-label="Local continuous scan is idle">
-                <span aria-hidden="true"></span>
-                <span aria-hidden="true"></span>
-                <span aria-hidden="true"></span>
-                <span aria-hidden="true"></span>
-                <span aria-hidden="true"></span>
-                <span aria-hidden="true"></span>
-                <span aria-hidden="true"></span>
-                <span aria-hidden="true"></span>
-              </div>
-              <span id="scanIndicatorLabel" class="scan-indicator-label">Active scan off</span>
-            </div>
-          </article>
-          <article class="metric">
-            <small>Device Trust</small>
-            <b id="deviceValue">-</b>
-            <span>Known devices stay local to this PC</span>
-          </article>
-          <article class="metric">
-            <small>Security Updates</small>
-            <b id="updateValue">Checking...</b>
-            <span>Local CVE and KEV definitions</span>
-          </article>
-        </section>
-
-        <section class="panel quick-actions">
-          <h2>Protection Actions</h2>
-          <div class="toolbar" aria-label="HomeGuard actions">
-            <label class="toggle">
-              <input id="activeScan" type="checkbox" />
-              <span>Active scan</span>
-            </label>
-            <label class="toggle">
-              <input id="probeAll" type="checkbox" />
-              <span>Probe all bounded hosts</span>
-            </label>
-            <button id="scanButton" class="action scan">Run Scan</button>
-            <button id="updateButton" class="action accent">Update Definitions</button>
-            <button id="adminButton" class="action secondary">Admin Access</button>
-            <button id="trayButton" class="action secondary">Minimize to Tray</button>
-            <button id="setupButton" class="action secondary">Setup Guide</button>
-            <button id="openHtmlButton" class="action secondary" disabled>Open Report</button>
-            <button id="openPdfButton" class="action secondary" disabled>Open PDF</button>
-            <button id="saveHtmlButton" class="action secondary" disabled>Save HTML As...</button>
-            <button id="openFolderButton" class="action secondary" disabled>Open Report Folder</button>
-          </div>
-        </section>
-
-        <section class="panel report-actions">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="HomeGuard navigation">
+        <div class="sidebar-header">
+          <span class="brand-mark large">GN</span>
           <div>
-            <h2>Latest Report</h2>
-            <p id="reportMeta" class="meta">Run a scan to generate a report preview.</p>
+            <h1>HomeGuard</h1>
+            <p>Security assistant</p>
           </div>
-          <div class="button-row">
-            <button id="statusButton" class="action secondary">Definition Status</button>
-            <button id="historyButton" class="action secondary">History</button>
-          </div>
+        </div>
+
+        <button id="newChatButton" class="new-chat" type="button">+ New Chat</button>
+
+        <nav class="tabs" aria-label="HomeGuard sections">
+          <button class="tab active" id="protectionTab" type="button">Ask HomeGuard</button>
+          <button class="tab" id="devicesTab" type="button">Devices</button>
+          <button class="tab" id="historyTab" type="button">Scan History</button>
+          <button class="tab" id="scheduleTab" type="button">Schedule</button>
+          <button class="tab" id="logsTab" type="button">Logs</button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <p id="statusText">Ready. Ask a security question or run a local scan.</p>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section id="protectionPage" class="page active-page chat-page">
+          <section class="chat-column" aria-label="HomeGuard chat">
+            <div id="chatMessages" class="chat-messages" aria-live="polite">
+              <article class="message assistant-message">
+                <div class="avatar">HG</div>
+                <div class="message-card">
+                  <p class="eyebrow">HomeGuard Assistant</p>
+                  <h2>What do you want to check?</h2>
+                  <p>Ask me about your home network, devices, scan results, or what to fix first. I can also run local HomeGuard actions from this chat.</p>
+                  <div class="prompt-grid" aria-label="Starter prompts">
+                    <button class="prompt-chip" type="button" data-prompt="Run a local network scan">Run a local network scan</button>
+                    <button class="prompt-chip" type="button" data-prompt="Explain my latest report">Explain my latest report</button>
+                    <button class="prompt-chip" type="button" data-prompt="What should I fix first?">What should I fix first?</button>
+                    <button class="prompt-chip" type="button" data-prompt="Show risky devices">Show risky devices</button>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <form id="chatForm" class="chat-composer" autocomplete="off">
+              <textarea id="chatInput" rows="1" placeholder="Ask HomeGuard a security question..." aria-label="Ask HomeGuard a security question"></textarea>
+              <button id="chatSendButton" type="submit" aria-label="Send message">Send</button>
+            </form>
+          </section>
+
+          <aside class="right-panel" aria-label="Protection status">
+            <section class="status-card network-protection-metric">
+              <div class="metric-copy">
+                <small>Network Risk</small>
+                <b id="riskValue">Not scanned</b>
+                <span>Run a scan to calculate risk.</span>
+              </div>
+              <div class="scan-indicator">
+                <div class="scan-orb" aria-label="Local continuous scan is idle">
+                  <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+                  <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+                </div>
+                <span id="scanIndicatorLabel" class="scan-indicator-label">Active scan off</span>
+              </div>
+            </section>
+
+            <section class="status-grid">
+              <article class="status-card compact">
+                <small>Device Trust</small>
+                <b id="deviceValue">-</b>
+                <span>Known devices stay local.</span>
+              </article>
+              <article class="status-card compact">
+                <small>Security Updates</small>
+                <b id="updateValue">Checking...</b>
+                <span>Local CVE and KEV definitions.</span>
+              </article>
+            </section>
+
+            <section class="panel quick-actions">
+              <h2>Quick Actions</h2>
+              <label class="toggle"><input id="activeScan" type="checkbox" /> <span>Active scan</span></label>
+              <label class="toggle"><input id="probeAll" type="checkbox" /> <span>Probe all bounded hosts</span></label>
+              <button id="scanButton" class="action scan" type="button">Run Scan</button>
+              <button id="updateButton" class="action accent" type="button">Update Definitions</button>
+              <button id="statusButton" class="action secondary" type="button">Definition Status</button>
+              <button id="historyButton" class="action secondary" type="button">History</button>
+              <button id="adminButton" class="action secondary" type="button">Admin Access</button>
+              <button id="trayButton" class="action secondary" type="button">Minimize to Tray</button>
+              <button id="setupButton" class="action secondary" type="button">Setup Guide</button>
+            </section>
+
+            <section class="panel report-actions">
+              <h2>Latest Report</h2>
+              <p id="reportMeta" class="meta">Run a scan to generate a report preview.</p>
+              <div class="button-row">
+                <button id="openHtmlButton" class="action secondary" type="button" disabled>Open Report</button>
+                <button id="openPdfButton" class="action secondary" type="button" disabled>Open PDF</button>
+                <button id="saveHtmlButton" class="action secondary" type="button" disabled>Save HTML As...</button>
+                <button id="openFolderButton" class="action secondary" type="button" disabled>Open Folder</button>
+              </div>
+            </section>
+          </aside>
+
+          <section class="panel output-panel hidden-support-panel" aria-label="Activity output">
+            <h2>Activity</h2>
+            <pre id="output">No command output yet.</pre>
+          </section>
+          <iframe id="reportFrame" title="HomeGuard report preview"></iframe>
         </section>
 
-        <section class="panel output-panel">
-          <h2>Activity</h2>
-          <pre id="output">No command output yet.</pre>
-        </section>
-
-        <iframe id="reportFrame" title="HomeGuard report preview"></iframe>
-      </section>
-
-      <section id="devicesPage" class="page">
-        <section class="panel page-panel">
-          <div class="toolbar page-toolbar">
-            <button id="devicesRefresh" class="action secondary">Refresh</button>
-            <button id="deviceTrusted" class="action accent">Mark Trusted</button>
-            <button id="deviceUnknown" class="action secondary">Mark Unknown</button>
-            <button id="deviceQuarantine" class="action danger">Quarantine</button>
-            <button id="deviceEditLabel" class="action secondary">Edit Family Label</button>
-            <button id="deviceRemove" class="action secondary">Remove from Known Devices</button>
-          </div>
-          <div class="table-wrap">
-            <table class="data-table" id="devicesTable">
-              <thead><tr><th>IP</th><th>Name</th><th>Device ID</th><th>Vendor</th><th>Trust</th><th>Owner</th><th>Type</th><th>Open ports</th><th>Last seen</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <p class="meta">Quarantine flags this device as Action Needed in scans and reports. To actually block traffic, remove the device from your router or change the WiFi password.</p>
-        </section>
-      </section>
-
-      <section id="historyPage" class="page">
-        <section class="panel page-panel">
-          <div class="toolbar page-toolbar">
-            <button id="historyRefresh" class="action secondary">Refresh</button>
-            <button id="historyOpenHtml" class="action secondary">Open HTML</button>
-            <button id="historyOpenPdf" class="action secondary">Open PDF</button>
-            <button id="historyOpenFolder" class="action secondary">Open Folder</button>
-            <label class="inline-field">Retention: <input id="historyRetention" type="number" min="1" value="30" /></label>
-            <button id="historyApply" class="action secondary">Apply</button>
-          </div>
-          <div class="table-wrap">
-            <table class="data-table" id="historyTable">
-              <thead><tr><th>When</th><th>Devices</th><th>Findings</th><th>Highest severity</th><th>Risk</th><th>Score</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-
-      <section id="schedulePage" class="page">
-        <section class="panel page-panel">
-          <p class="meta">HomeGuard can run scheduled passive scans automatically. Scheduled scans use the same detection engine and write reports to the app data folder.</p>
-          <div class="fieldset">
-            <h2>Scheduled scans</h2>
-            <div class="toolbar page-toolbar">
-              <label class="toggle"><input id="scheduleEnabled" type="checkbox" /> <span>Enable scheduled scans</span></label>
-              <label class="toggle"><input id="scheduleBackground" type="checkbox" /> <span>Background monitor (tray)</span></label>
+        <section id="devicesPage" class="page">
+          <section class="panel page-panel">
+            <div class="section-heading">
+              <h2>Devices</h2>
+              <p class="meta">Known devices, trust state, labels, and open ports from local scans.</p>
             </div>
             <div class="toolbar page-toolbar">
-              <span class="meta">Interval:</span>
-              <label class="toggle"><input name="scheduleInterval" type="radio" value="daily" /> <span>Daily</span></label>
-              <label class="toggle"><input name="scheduleInterval" type="radio" value="hourly" /> <span>Hourly</span></label>
-              <label class="toggle"><input name="scheduleInterval" type="radio" value="weekly" /> <span>Weekly</span></label>
+              <button id="devicesRefresh" class="action secondary">Refresh</button>
+              <button id="deviceTrusted" class="action accent">Mark Trusted</button>
+              <button id="deviceUnknown" class="action secondary">Mark Unknown</button>
+              <button id="deviceQuarantine" class="action danger">Quarantine</button>
+              <button id="deviceEditLabel" class="action secondary">Edit Family Label</button>
+              <button id="deviceRemove" class="action secondary">Remove from Known Devices</button>
             </div>
-            <div class="toolbar page-toolbar">
-              <button id="scheduleSave" class="action accent">Save schedule</button>
-              <button id="scheduleRunNow" class="action secondary">Run now</button>
+            <div class="table-wrap">
+              <table class="data-table" id="devicesTable">
+                <thead><tr><th>IP</th><th>Name</th><th>Device ID</th><th>Vendor</th><th>Trust</th><th>Owner</th><th>Type</th><th>Open ports</th><th>Last seen</th></tr></thead>
+                <tbody></tbody>
+              </table>
             </div>
-            <p id="scheduleStatus" class="meta">Scheduled scans are disabled.</p>
-          </div>
+            <p class="meta">Quarantine flags a device as Action Needed in scans and reports. To actually block traffic, remove the device from your router or change the WiFi password.</p>
+          </section>
         </section>
-      </section>
 
-      <section id="logsPage" class="page">
-        <section class="panel page-panel">
-          <div class="toolbar page-toolbar">
-            <button id="logsReload" class="action secondary">Reload</button>
-            <button id="logsOpenFolder" class="action secondary">Open Logs Folder</button>
-          </div>
-          <pre id="logsOutput" class="log-view">No log file yet.</pre>
+        <section id="historyPage" class="page">
+          <section class="panel page-panel">
+            <div class="section-heading"><h2>Scan History</h2><p class="meta">Open past reports and manage retention.</p></div>
+            <div class="toolbar page-toolbar">
+              <button id="historyRefresh" class="action secondary">Refresh</button>
+              <button id="historyOpenHtml" class="action secondary">Open HTML</button>
+              <button id="historyOpenPdf" class="action secondary">Open PDF</button>
+              <button id="historyOpenFolder" class="action secondary">Open Folder</button>
+              <label class="inline-field">Retention: <input id="historyRetention" type="number" min="1" value="30" /></label>
+              <button id="historyApply" class="action secondary">Apply</button>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="historyTable">
+                <thead><tr><th>When</th><th>Devices</th><th>Findings</th><th>Highest severity</th><th>Risk</th><th>Score</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
         </section>
-      </section>
-    </main>
+
+        <section id="schedulePage" class="page">
+          <section class="panel page-panel">
+            <div class="section-heading"><h2>Schedule</h2><p class="meta">Run scheduled passive scans automatically.</p></div>
+            <div class="fieldset">
+              <h2>Scheduled scans</h2>
+              <div class="toolbar page-toolbar">
+                <label class="toggle"><input id="scheduleEnabled" type="checkbox" /> <span>Enable scheduled scans</span></label>
+                <label class="toggle"><input id="scheduleBackground" type="checkbox" /> <span>Background monitor</span></label>
+              </div>
+              <div class="toolbar page-toolbar">
+                <span class="meta">Interval:</span>
+                <label class="toggle"><input name="scheduleInterval" type="radio" value="daily" /> <span>Daily</span></label>
+                <label class="toggle"><input name="scheduleInterval" type="radio" value="hourly" /> <span>Hourly</span></label>
+                <label class="toggle"><input name="scheduleInterval" type="radio" value="weekly" /> <span>Weekly</span></label>
+              </div>
+              <div class="toolbar page-toolbar">
+                <button id="scheduleSave" class="action accent">Save schedule</button>
+                <button id="scheduleRunNow" class="action secondary">Run now</button>
+              </div>
+              <p id="scheduleStatus" class="meta">Scheduled scans are disabled.</p>
+            </div>
+          </section>
+        </section>
+
+        <section id="logsPage" class="page">
+          <section class="panel page-panel">
+            <div class="section-heading"><h2>Logs</h2><p class="meta">Local HomeGuard logs.</p></div>
+            <div class="toolbar page-toolbar">
+              <button id="logsReload" class="action secondary">Reload</button>
+              <button id="logsOpenFolder" class="action secondary">Open Logs Folder</button>
+            </div>
+            <pre id="logsOutput" class="log-view">No log file yet.</pre>
+          </section>
+        </section>
+      </main>
+    </div>
 
     <script src="renderer.js"></script>
+    <script src="chat-assistant.js"></script>
   </body>
 </html>
