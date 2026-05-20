@@ -749,7 +749,15 @@ def scan_process_memory(processes: Iterable[dict[str, Any]], *, max_processes: i
     findings: list[Finding] = []
     reviewed = 0
     signatures = {signature.lower(): label for signature, label in MEMORY_SIGNATURES.items()}
-    for process in list(processes)[:max_processes]:
+    # HomeGuard's own process keeps every MEMORY_SIGNATURES marker in plain
+    # module memory, so reading it back always self-matches and reports the
+    # scanner itself as malware. Drop our PID before applying the budget so a
+    # real process is never displaced by the skipped one.
+    own_pid = os.getpid()
+    all_rows = list(processes)
+    candidates = [row for row in all_rows if int(row.get("pid") or 0) != own_pid]
+    self_excluded = len(candidates) != len(all_rows)
+    for process in candidates[:max_processes]:
         pid = int(process.get("pid") or 0)
         if pid <= 4:
             continue
@@ -796,7 +804,11 @@ def scan_process_memory(processes: Iterable[dict[str, Any]], *, max_processes: i
                     },
                 )
             )
-    return findings, {"memory_processes_reviewed": reviewed, "memory_signatures": len(signatures)}
+    return findings, {
+        "memory_processes_reviewed": reviewed,
+        "memory_signatures": len(signatures),
+        "memory_self_process_excluded": self_excluded,
+    }
 
 
 def run_endpoint_malware_scan(

@@ -68,6 +68,7 @@ from greynoc_homeguard.virus_scanner import (  # noqa: E402
     analyze_processes,
     run_endpoint_malware_scan,
     scan_downloads,
+    scan_process_memory,
 )
 
 
@@ -436,6 +437,29 @@ class EndpointMalwareScannerTests(unittest.TestCase):
         self.assertEqual(meta["processes_reviewed"], 1)
         self.assertTrue(any(f.category == "endpoint_process" for f in findings))
         self.assertTrue(any(f.severity == "high" for f in findings))
+
+    def test_memory_scanner_skips_homeguards_own_process(self):
+        # HomeGuard's own process holds every MEMORY_SIGNATURES marker as plain
+        # module data, so scanning it must never report the scanner as malware.
+        own_pid = os.getpid()
+        rows = [
+            {"pid": own_pid, "name": "greynoc-homeguard"},
+            {"pid": 999_001, "name": "other.exe"},
+        ]
+
+        def fake_read(_pid, **_kwargs):
+            return [b"invoke-mimikatz"]
+
+        with mock.patch(
+            "greynoc_homeguard.virus_scanner._read_process_memory", side_effect=fake_read
+        ):
+            findings, meta = scan_process_memory(rows)
+
+        self.assertTrue(meta["memory_self_process_excluded"])
+        self.assertEqual(meta["memory_processes_reviewed"], 1)
+        flagged_pids = {finding.evidence.get("pid") for finding in findings}
+        self.assertNotIn(own_pid, flagged_pids)
+        self.assertIn(999_001, flagged_pids)
 
     def test_download_scanner_flags_recent_script_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:
