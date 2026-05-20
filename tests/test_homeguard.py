@@ -173,6 +173,22 @@ class NocCoreDiscoveryTests(unittest.TestCase):
         self.assertGreater(score, 0.0)
         self.assertLessEqual(score, 0.99)
 
+    def test_discover_lan_hosts_noc_core_passive_returns_devices(self):
+        from greynoc_homeguard.network import LocalInterface, discover_lan_hosts_noc_core
+
+        # Passive run over a fake private /24 exercises the interface loop,
+        # the noc_core engine, and the DiscoveryDevice -> Device conversion
+        # without emitting any active probes.
+        devices = discover_lan_hosts_noc_core(
+            [LocalInterface("test", "192.168.123.1", "192.168.123.0/24")],
+            active=False,
+            probe_all=False,
+            tcp_ports=[80, 443],
+        )
+        self.assertIsInstance(devices, list)
+        for device in devices:
+            self.assertIsInstance(device, Device)
+
 
 class DetectionEngineTests(unittest.TestCase):
     def test_engine_flags_telnet(self):
@@ -718,7 +734,7 @@ class ScanWorkflowTests(_AppDataMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch("greynoc_homeguard.scan_runner.detect_local_interfaces", return_value=[]):
                 with mock.patch(
-                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts_noc_core",
                     return_value=[Device(ip="192.168.1.20", hostname="router", open_ports=[80])],
                 ):
                     report, paths, entry = run_full_scan(output_dir=tmp, update_known_devices=False)
@@ -963,7 +979,7 @@ class ScanDiffTests(unittest.TestCase):
                 return_value=[],
             ):
                 with mock.patch(
-                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts_noc_core",
                     return_value=[
                         Device(ip="192.168.1.10", hostname="router", open_ports=[80])
                     ],
@@ -973,7 +989,7 @@ class ScanDiffTests(unittest.TestCase):
                         output_dir=out1, update_known_devices=False
                     )
                 with mock.patch(
-                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts_noc_core",
                     return_value=[
                         Device(
                             ip="192.168.1.10",

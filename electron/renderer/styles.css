@@ -53,13 +53,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   height: 22px;
   place-items: center;
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: 0;
   background: linear-gradient(135deg, #12233a, #0c1118);
   color: var(--text);
   font-size: 10px;
   font-weight: 900;
 }
-.brand-mark.large { width: 42px; height: 42px; border-radius: 12px; font-size: 15px; }
+.brand-mark.large { width: 42px; height: 42px; border-radius: 0; font-size: 15px; }
 
 .window-controls { display: flex; height: 100%; -webkit-app-region: no-drag; }
 .window-controls button { width: 46px; height: 100%; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 16px; }
@@ -83,7 +83,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface-raised);
   color: var(--text);
   cursor: pointer;
@@ -96,7 +96,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .tab {
   min-height: 42px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -120,7 +120,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--border);
-  border-radius: 22px;
+  border-radius: 0;
   background: rgba(12, 17, 23, 0.72);
   box-shadow: var(--shadow);
   overflow: hidden;
@@ -136,7 +136,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   height: 34px;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 50%;
+  border-radius: 0;
   background: #102030;
   color: var(--text);
   font-size: 11px;
@@ -145,7 +145,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .message-card {
   max-width: 780px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   padding: 16px 18px;
@@ -160,7 +160,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .prompt-chip {
   min-height: 44px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--surface-soft);
   color: var(--text);
   cursor: pointer;
@@ -181,7 +181,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   max-height: 150px;
   resize: none;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 0;
   background: #0b1017;
   color: var(--text);
   padding: 13px 15px;
@@ -190,7 +190,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .chat-composer button {
   min-width: 82px;
   border: 0;
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--accent);
   color: #fff;
   cursor: pointer;
@@ -203,7 +203,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .status-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 12px 0; }
 .status-card, .panel {
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 0;
   background: rgba(17, 24, 32, 0.88);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
 }
@@ -225,7 +225,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .action, .toggle {
   min-height: 40px;
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: 0;
   background: #121922;
   color: #ffffff;
   font-size: 14px;
@@ -246,10 +246,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .scan-indicator { display: flex; align-items: center; flex-direction: column; gap: 8px; }
 .scan-indicator-label { color: var(--subtle); font-size: 10px; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; }
 .scan-indicator-label.is-active { color: #8dd7ff; }
-.scan-orb { position: relative; width: 58px; height: 58px; border-radius: 50%; opacity: 0.34; filter: saturate(0.7); transition: filter 160ms ease, opacity 160ms ease; }
+.scan-orb { position: relative; width: 58px; height: 58px; border-radius: 0; opacity: 0.34; filter: saturate(0.7); transition: filter 160ms ease, opacity 160ms ease; }
 .scan-orb.is-active { opacity: 1; filter: saturate(1.25); animation: scan-orb-spin 1400ms linear infinite; }
-.scan-orb::before { content: ""; position: absolute; inset: 12px; border-radius: 50%; background: #0f2032; box-shadow: inset 0 0 0 1px #1e4266, 0 0 22px rgba(78,184,255,.28); }
-.scan-orb::after { content: ""; position: absolute; inset: 4px; border: 1px solid rgba(130,216,255,.18); border-left-color: rgba(130,216,255,.76); border-radius: 50%; opacity: 0; }
+.scan-orb::before { content: ""; position: absolute; inset: 12px; border-radius: 0; background: #0f2032; box-shadow: inset 0 0 0 1px #1e4266, 0 0 22px rgba(78,184,255,.28); }
+.scan-orb::after { content: ""; position: absolute; inset: 4px; border: 1px solid rgba(130,216,255,.18); border-left-color: rgba(130,216,255,.76); border-radius: 0; opacity: 0; }
 .scan-orb.is-active::after { opacity: 1; }
 .scan-orb span { position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px; background: #82d8ff; box-shadow: 0 0 10px rgba(130,216,255,.74); }
 .scan-orb span:nth-child(1) { opacity: 1; transform: rotate(0deg) translateY(-24px); }
@@ -267,7 +267,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .section-heading p { margin: 0; }
 .toolbar, .button-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .page-toolbar { margin-bottom: 12px; }
-.table-wrap { width: 100%; min-height: 360px; max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: 14px; background: #0b1017; }
+.table-wrap { width: 100%; min-height: 360px; max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: 0; background: #0b1017; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th, .data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
 .data-table th { position: sticky; top: 0; z-index: 1; background: #121922; color: var(--text); font-weight: 800; }
@@ -277,9 +277,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .data-table tr.trust-quarantined td { color: #ff7777; }
 .empty-cell { color: var(--muted); text-align: center; }
 .inline-field { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 700; }
-.inline-field input { width: 72px; border: 1px solid var(--border); border-radius: 10px; background: #0b1017; color: var(--text); padding: 8px; }
-.fieldset { margin-top: 18px; border: 1px solid var(--border); border-radius: 16px; background: #0d131a; padding: 16px; }
-.log-view, .output-panel pre { min-height: 520px; margin: 0; overflow: auto; border: 1px solid var(--border); border-radius: 14px; background: #05070a; color: #d8e6ff; padding: 14px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.inline-field input { width: 72px; border: 1px solid var(--border); border-radius: 0; background: #0b1017; color: var(--text); padding: 8px; }
+.fieldset { margin-top: 18px; border: 1px solid var(--border); border-radius: 0; background: #0d131a; padding: 16px; }
+.log-view, .output-panel pre { min-height: 520px; margin: 0; overflow: auto; border: 1px solid var(--border); border-radius: 0; background: #05070a; color: #d8e6ff; padding: 14px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 
 .scan-progress-card {
   border-color: rgba(119, 214, 255, 0.36);
@@ -293,7 +293,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .scan-progress-log {
   margin-top: 10px;
   border: 1px solid rgba(122, 211, 255, 0.22);
-  border-radius: 12px;
+  border-radius: 0;
   background: rgba(3, 7, 12, 0.66);
   color: #bfefff;
   padding: 10px;
@@ -303,7 +303,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   white-space: pre-wrap;
 }
 .scan-progress-avatar {
-  border-radius: 10px;
+  border-radius: 0;
   background: #06131f;
   color: #a8ecff;
   box-shadow: 0 0 18px rgba(106, 219, 255, 0.24);
@@ -312,7 +312,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .scan-orb {
   width: 66px;
   height: 66px;
-  border-radius: 18px;
+  border-radius: 0;
   opacity: 0.46;
   image-rendering: pixelated;
   filter: saturate(0.82) contrast(1.08);
@@ -339,7 +339,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   content: "";
   position: absolute;
   inset: 9px;
-  border-radius: 50%;
+  border-radius: 0;
   background:
     conic-gradient(from 20deg,
       #73e7ff 0deg 26deg,
@@ -365,7 +365,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   position: absolute;
   inset: 24px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 0;
   background: #aaf2ff;
   box-shadow:
     -12px -6px 0 -3px rgba(229, 107, 255, 0.8),
@@ -382,7 +382,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   width: 6px;
   height: 6px;
   margin: -3px;
-  border-radius: 2px;
+  border-radius: 0;
   background: #8fe8ff;
   box-shadow: 0 0 12px rgba(143, 232, 255, 0.72);
   transform-origin: center;
