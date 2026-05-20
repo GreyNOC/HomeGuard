@@ -190,6 +190,16 @@ class NocCoreDiscoveryTests(unittest.TestCase):
         for device in devices:
             self.assertIsInstance(device, Device)
 
+    def test_discover_lan_hosts_noc_core_narrows_oversized_subnet(self):
+        from greynoc_homeguard.network import _narrow_oversized_network
+
+        # A /16 interface exceeds the discovery size cap; it must be bounded to
+        # a /24 around the host instead of skipped, or every LAN host vanishes.
+        narrowed = _narrow_oversized_network(ipaddress.ip_network("10.0.0.0/16"), "10.0.7.42")
+        self.assertEqual(str(narrowed), "10.0.7.0/24")
+        unchanged = _narrow_oversized_network(ipaddress.ip_network("192.168.1.0/24"), "192.168.1.5")
+        self.assertEqual(str(unchanged), "192.168.1.0/24")
+
 
 class DetectionEngineTests(unittest.TestCase):
     def test_engine_flags_telnet(self):
@@ -460,6 +470,19 @@ class EndpointMalwareScannerTests(unittest.TestCase):
         flagged_pids = {finding.evidence.get("pid") for finding in findings}
         self.assertNotIn(own_pid, flagged_pids)
         self.assertIn(999_001, flagged_pids)
+
+    def test_memory_scanner_tolerates_malformed_pid(self):
+        # A malformed PID anywhere in the input must not abort the memory scan.
+        rows = [
+            {"pid": "not-a-pid", "name": "weird.exe"},
+            {"pid": 999_002, "name": "ok.exe"},
+        ]
+        with mock.patch(
+            "greynoc_homeguard.virus_scanner._read_process_memory", return_value=[]
+        ):
+            findings, meta = scan_process_memory(rows)
+        self.assertEqual(findings, [])
+        self.assertEqual(meta["memory_processes_reviewed"], 1)
 
     def test_download_scanner_flags_recent_script_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:

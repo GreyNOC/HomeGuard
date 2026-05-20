@@ -745,6 +745,14 @@ def _read_process_memory(pid: int, *, max_bytes: int = 2 * 1024 * 1024) -> list[
     return chunks
 
 
+def _safe_pid(value: Any) -> int:
+    """Parse a process-id value, returning 0 when it is missing or malformed."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def scan_process_memory(processes: Iterable[dict[str, Any]], *, max_processes: int = 48) -> tuple[list[Finding], dict[str, Any]]:
     findings: list[Finding] = []
     reviewed = 0
@@ -752,13 +760,15 @@ def scan_process_memory(processes: Iterable[dict[str, Any]], *, max_processes: i
     # HomeGuard's own process keeps every MEMORY_SIGNATURES marker in plain
     # module memory, so reading it back always self-matches and reports the
     # scanner itself as malware. Drop our PID before applying the budget so a
-    # real process is never displaced by the skipped one.
+    # real process is never displaced by the skipped one. _safe_pid coerces a
+    # malformed PID to 0 (filtered out below) so one bad row cannot abort the
+    # whole scan.
     own_pid = os.getpid()
     all_rows = list(processes)
-    candidates = [row for row in all_rows if int(row.get("pid") or 0) != own_pid]
+    candidates = [row for row in all_rows if _safe_pid(row.get("pid")) != own_pid]
     self_excluded = len(candidates) != len(all_rows)
     for process in candidates[:max_processes]:
-        pid = int(process.get("pid") or 0)
+        pid = _safe_pid(process.get("pid"))
         if pid <= 4:
             continue
         reviewed += 1

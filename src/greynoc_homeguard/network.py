@@ -630,6 +630,28 @@ def discovery_device_to_device(host: DiscoveryDevice | dict[str, Any]) -> Device
     )
 
 
+def _narrow_oversized_network(
+    network: ipaddress.IPv4Network, anchor_ip: str
+) -> ipaddress.IPv4Network:
+    """Bound an oversized LAN to a /24 around the host so discovery accepts it.
+
+    ``discover_local_network`` rejects subnets above its safe size cap and the
+    caller swallows that error, so a /16-or-larger interface would otherwise be
+    skipped entirely and every host on that LAN would vanish from scan results.
+    """
+    if network.num_addresses <= _noc_discovery.DEFAULT_MAX_ADDRESSES:
+        return network
+    try:
+        anchor = ipaddress.ip_address(anchor_ip)
+    except ValueError:
+        anchor = None
+    if isinstance(anchor, ipaddress.IPv4Address):
+        host_24 = ipaddress.ip_network(f"{anchor}/24", strict=False)
+        if host_24.subnet_of(network):
+            return host_24
+    return ipaddress.ip_network(f"{network.network_address}/24", strict=False)
+
+
 def discover_lan_hosts_noc_core(
     interfaces: list[LocalInterface],
     *,
@@ -656,6 +678,7 @@ def discover_lan_hosts_noc_core(
             continue
         if network.version != 4 or not is_private_or_local_network(network):
             continue
+        network = _narrow_oversized_network(network, interface.ip)
         key = str(network)
         if key not in cidrs:
             cidrs.append(key)
