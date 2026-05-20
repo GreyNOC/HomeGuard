@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import json
 import os
-import textwrap
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -26,6 +26,32 @@ SUPPORTED_PROVIDERS = {
 DEFAULT_MODE = STERILE_PROVIDER
 DEFAULT_SHARE_LEVEL = "minimal"
 SHARE_LEVELS = {"minimal", "standard", "full"}
+SENSITIVE_EVIDENCE_KEY_MARKERS = (
+    "address",
+    "credential",
+    "directory",
+    "domain",
+    "file",
+    "host",
+    "ip",
+    "key",
+    "location",
+    "mac",
+    "name",
+    "path",
+    "registry",
+    "secret",
+    "sid",
+    "ssid",
+    "token",
+    "user",
+)
+IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+MAC_RE = re.compile(r"\b[0-9a-fA-F]{2}(?:(?::|-)[0-9a-fA-F]{2}){5}\b")
+WINDOWS_PATH_RE = re.compile(r"\b[A-Za-z]:[\\/][^\s\"']+")
+UNC_PATH_RE = re.compile(r"\\\\[^\s\\/\"']+[\\/][^\s\"']+")
+UNIX_USER_PATH_RE = re.compile(r"(?<!\w)/(?:Users|home)/[^\s\"']+")
+REGISTRY_PATH_RE = re.compile(r"\b(?:HKLM|HKCU|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)\\[^\s\"']+", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -244,6 +270,8 @@ def _device_payload(device: Any, share_level: str) -> dict[str, Any]:
 
 def _finding_payload(finding: Any, share_level: str) -> dict[str, Any]:
     row = finding.as_dict() if hasattr(finding, "as_dict") else dict(finding or {})
+    evidence = dict(row.get("evidence") or {})
+    redactions = _finding_redactions(row, evidence)
     payload = {
         "rule_id": row.get("rule_id", ""),
         "title": row.get("title", ""),
@@ -254,28 +282,119 @@ def _finding_payload(finding: Any, share_level: str) -> dict[str, Any]:
         "category": row.get("category", ""),
         "plain_english": row.get("plain_english", ""),
         "recommended_actions": list(row.get("recommended_actions") or []),
-        "evidence": dict(row.get("evidence") or {}),
+        "evidence": evidence,
     }
     if share_level == "minimal":
         payload["device_ip"] = _stable_token(str(row.get("device_ip") or ""), "ip")
         payload["device_name"] = _stable_token(str(row.get("device_name") or ""), "device")
+        payload["title"] = _redact_text(str(payload["title"]), redactions)
+        payload["plain_english"] = _redact_text(str(payload["plain_english"]), redactions)
+        payload["recommended_actions"] = [_redact_text(str(action), redactions) for action in payload["recommended_actions"]]
     else:
         payload["device_ip"] = row.get("device_ip", "")
         payload["device_name"] = row.get("device_name", "")
     if share_level != "full":
-        payload["evidence"] = _scrub_evidence(payload["evidence"])
+        payload["evidence"] = _scrub_evidence(payload["evidence"], share_level=share_level)
     return payload
 
 
-def _scrub_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
-    scrubbed: dict[str, Any] = {}
+def _finding_redactions(row: dict[str, Any], evidence: dict[str, Any]) -> dict[str, str]:
+    replacements: dict[str, str] = {}
+    candidates = {
+        "device_ip": (row.get("device_ip"), "ip"),
+        "device_name": (row.get("device_name"), "device"),
+        "hostname": (row.get("hostname"), "host"),
+        "mac_address": (row.get("mac_address") or row.get("mac"), "mac"),
+    }
+    for _, (value, prefix) in candidates.items():
+        text = str(value or "")
+        if text:
+            replacements[text] = _stable_token(text, prefix)
     for key, value in evidence.items():
-        lowered = str(key).lower()
-        if any(marker in lowered for marker in ("mac", "ip", "host", "path", "user", "ssid")):
-            scrubbed[key] = _stable_token(str(value), lowered[:8] or "value")
-        else:
-            scrubbed[key] = value
-    return scrubbed
+        if _is_sensitive_key(str(key)):
+            text = str(value or "")
+            if text:
+                replacements[text] = _stable_token(text, _token_prefix_for_key(str(key)))
+    return replacements
+
+
+def _scrub_evidence(evidence: dict[str, Any], *, share_level: str) -> dict[str, Any]:
+    return {key: _scrub_evidence_value(str(key), value, share_level=share_level) for key, value in evidence.items()}
+
+
+def _scrub_evidence_value(key: str, value: Any, *, share_level: str) -> Any:
+    if isinstance(value, dict):
+        return {inner_key: _scrub_evidence_value(str(inner_key), inner_value, share_level=share_level) for inner_key, inner_value in value.items()}
+    if isinstance(value, list):
+        return [_scrub_evidence_value(key, item, share_level=share_level) for item in value]
+    if not isinstance(value, str):
+        return value
+    sensitive_key = _is_sensitive_key(key)
+    if share_level == "minimal":
+        return _redact_text(value, {}) if _looks_sensitive_text(value) else _stable_token(value, _token_prefix_for_key(key))
+    if sensitive_key:
+        return _redact_text(value, {}) if _looks_sensitive_text(value) else _stable_token(value, _token_prefix_for_key(key))
+    return _redact_text(value, {}) if _looks_sensitive_text(value) else value
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in SENSITIVE_EVIDENCE_KEY_MARKERS)
+
+
+def _token_prefix_for_key(key: str) -> str:
+    lowered = key.lower()
+    if "ip" in lowered or "address" in lowered:
+        return "ip"
+    if "mac" in lowered:
+        return "mac"
+    if "host" in lowered:
+        return "host"
+    if "path" in lowered or "file" in lowered or "directory" in lowered or "registry" in lowered:
+        return "path"
+    if "user" in lowered:
+        return "user"
+    if "ssid" in lowered:
+        return "ssid"
+    return "value"
+
+
+def _looks_sensitive_text(value: str) -> bool:
+    return any(
+        pattern.search(value)
+        for pattern in (IPV4_RE, MAC_RE, WINDOWS_PATH_RE, UNC_PATH_RE, UNIX_USER_PATH_RE, REGISTRY_PATH_RE)
+    )
+
+
+def _redact_text(text: str, replacements: dict[str, str]) -> str:
+    redacted = text
+    for raw, token in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        if raw:
+            redacted = redacted.replace(raw, token)
+    redacted = IPV4_RE.sub(lambda match: _stable_token(match.group(0), "ip"), redacted)
+    redacted = MAC_RE.sub(lambda match: _stable_token(match.group(0), "mac"), redacted)
+    redacted = WINDOWS_PATH_RE.sub(lambda match: _stable_token(match.group(0), "path"), redacted)
+    redacted = UNC_PATH_RE.sub(lambda match: _stable_token(match.group(0), "path"), redacted)
+    redacted = UNIX_USER_PATH_RE.sub(lambda match: _stable_token(match.group(0), "path"), redacted)
+    redacted = REGISTRY_PATH_RE.sub(lambda match: _stable_token(match.group(0), "path"), redacted)
+    return redacted
+
+
+def _report_redactions(data: dict[str, Any]) -> dict[str, str]:
+    replacements: dict[str, str] = {}
+    for device in data.get("devices") or []:
+        row = device.as_dict() if hasattr(device, "as_dict") else dict(device or {})
+        for key, prefix in (("ip", "ip"), ("hostname", "host"), ("mac_address", "mac"), ("mac", "mac")):
+            value = str(row.get(key) or "")
+            if value:
+                replacements[value] = _stable_token(value, prefix)
+    for finding in data.get("findings") or []:
+        row = finding.as_dict() if hasattr(finding, "as_dict") else dict(finding or {})
+        for key, prefix in (("device_ip", "ip"), ("device_name", "device")):
+            value = str(row.get(key) or "")
+            if value:
+                replacements[value] = _stable_token(value, prefix)
+    return replacements
 
 
 def report_to_signal_context(report: HomeGuardReport | dict[str, Any], *, share_level: str = DEFAULT_SHARE_LEVEL) -> dict[str, Any]:
@@ -291,6 +410,7 @@ def report_to_signal_context(report: HomeGuardReport | dict[str, Any], *, share_
     data = report.as_dict() if hasattr(report, "as_dict") else dict(report or {})
     devices = data.get("devices") or []
     findings = data.get("findings") or []
+    redactions = _report_redactions(data) if share_level == "minimal" else {}
     sorted_findings = sorted(
         findings,
         key=lambda item: _safe_float((item.as_dict() if hasattr(item, "as_dict") else item).get("risk_score"), 0.0),
@@ -303,14 +423,17 @@ def report_to_signal_context(report: HomeGuardReport | dict[str, Any], *, share_
         "created_at": data.get("created_at", ""),
         "overall_risk": data.get("overall_risk", "unknown"),
         "overall_score": data.get("overall_score", 0),
-        "summary": data.get("summary", ""),
+        "summary": _redact_text(str(data.get("summary", "")), redactions) if share_level == "minimal" else data.get("summary", ""),
         "counts": {
             "devices": len(devices),
             "findings": len(findings),
         },
         "top_findings": [_finding_payload(item, share_level) for item in sorted_findings[:12]],
         "devices": [_device_payload(item, share_level) for item in devices[:40]],
-        "next_steps": list(data.get("next_steps") or [])[:12],
+        "next_steps": [
+            _redact_text(str(step), redactions) if share_level == "minimal" else step
+            for step in list(data.get("next_steps") or [])[:12]
+        ],
     }
 
 
@@ -487,13 +610,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _settings_cli_payload(settings: AISettings) -> dict[str, Any]:
+    return {
+        "enabled": settings.enabled,
+        "provider": settings.provider,
+        "model": settings.model,
+        "share_level": settings.share_level,
+        "temperature": settings.temperature,
+        "max_output_tokens": settings.max_output_tokens,
+        "sterile": settings.is_sterile(),
+    }
+
+
 def _print_settings(settings: AISettings) -> None:
     mode = "sterile" if settings.is_sterile() else "ai-enabled"
     print(f"mode       : {mode}")
     print(f"provider   : {settings.provider}")
     print(f"model      : {settings.model or '-'}")
-    print(f"api_key_env: {settings.api_key_env or '-'}")
-    print(f"endpoint   : {settings.endpoint or '-'}")
     print(f"share_level: {settings.share_level}")
 
 
@@ -502,14 +635,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         settings = load_ai_settings()
         if args.json:
-            print(json.dumps(settings.as_dict(), indent=2, sort_keys=True))
+            print(json.dumps(_settings_cli_payload(settings), indent=2, sort_keys=True))
         else:
             _print_settings(settings)
         return 0
     if args.command == "sterile":
         settings = set_sterile()
         if args.json:
-            print(json.dumps(settings.as_dict(), indent=2, sort_keys=True))
+            print(json.dumps(_settings_cli_payload(settings), indent=2, sort_keys=True))
         else:
             print("HomeGuard AI bridge is sterile. No AI provider calls will be made.")
         return 0
@@ -522,13 +655,10 @@ def main(argv: list[str] | None = None) -> int:
             share_level=args.share_level,
         )
         if args.json:
-            print(json.dumps(settings.as_dict(), indent=2, sort_keys=True))
+            print(json.dumps(_settings_cli_payload(settings), indent=2, sort_keys=True))
         else:
             _print_settings(settings)
-            print(textwrap.dedent(f"""
-                Set your API key before using AI:
-                  {settings.api_key_env}=<your key>
-            """).strip())
+            print("Set the provider credential in your environment before using AI.")
         return 0
     if args.command == "explain":
         response = explain_report(_load_report(args.report), question=args.question)
