@@ -26,6 +26,7 @@ This repo is built as a bounded local discovery and review tool with detection r
   - router, camera, NAS, and remote-access hardening hints
   - CVE/known-exploited-vulnerability patch-priority hints
 - Plain-English explanations and recommended actions.
+- Optional user-owned AI bridge that can route bounded HomeGuard signals and chat messages to the user's preferred AI API, or stay fully sterile/offline by default.
 - Markdown, HTML, PDF, JSON, CSV, and SHA-256 manifest output.
 - Download buttons in the HTML report for HTML, PDF, JSON, and CSV.
 - HomeGuard HTML/PDF reports with executive summary, protection status, findings, next steps, and device inventory.
@@ -41,6 +42,21 @@ This repo is built as a bounded local discovery and review tool with detection r
 ## Quality / detection engine
 
 HomeGuard uses `HomeGuardDetectionEngine` for the consumer findings. The engine loads rules from built-in logic and security definitions, evaluates each device, emits severity/confidence/risk-priority findings, and records engine metadata in every report. The GUI and CLI both call the same `HomeGuardEngine` report orchestrator, so scans, imports, HTML reports, PDF reports, and the desktop app use the same detection path.
+
+## Optional AI bridge
+
+HomeGuard is sterile by default: it does not send scan signals, reports, device inventory, or chat messages to an AI provider unless the user explicitly enables one.
+
+Users can choose OpenAI, Anthropic, OpenRouter, Gemini, or a custom OpenAI-compatible endpoint. API keys stay in environment variables; HomeGuard only stores provider settings and the name of the key variable.
+
+```bash
+python -m greynoc_homeguard.ai_bridge status
+python -m greynoc_homeguard.ai_bridge sterile
+python -m greynoc_homeguard.ai_bridge configure openai --model gpt-4.1-mini --share-level minimal
+python -m greynoc_homeguard.ai_bridge explain --report path/to/report.json
+```
+
+See `docs/AI_BRIDGE.md` for provider setup, privacy levels, and custom endpoint examples.
 
 ## Safety model
 
@@ -332,6 +348,7 @@ scripts/build_exe.py            # PyInstaller build helper
 scripts/compile_android.sh      # Linux/macOS Android build helper
 scripts/compile_macos.sh        # macOS app build helper
 src/greynoc_homeguard/
+  ai_bridge.py                  # opt-in user AI routing / sterile mode
   cli.py                        # command-line interface
   gui.py                        # desktop GUI / Protection Center
   network.py                    # safe local network discovery
@@ -344,6 +361,7 @@ src/greynoc_homeguard/
   paths.py                      # app-data storage paths
   models.py                     # dataclasses
 docs/
+  AI_BRIDGE.md
   SECURITY.md
   SECURITY_DEFINITIONS.md
   POWERSPOIT_RESISTANCE.md
@@ -356,6 +374,7 @@ docs/
     SECURITY_REVIEW.md
 tests/
   test_homeguard.py             # unit tests
+  test_ai_bridge.py             # AI bridge sterile mode and redaction tests
 ```
 
 ## GitHub push checklist
