@@ -21,7 +21,7 @@ from .engine import HomeGuardEngine
 from .history import HistoryEntry, ProtectionHistory
 from .logging_setup import get_logger
 from .models import Finding, HomeGuardReport
-from .network import NetworkSensorConfig, detect_local_interfaces, discover_lan_hosts
+from .network import detect_local_interfaces, discover_lan_hosts_noc_core
 from .paths import default_baseline_path, default_output_dir, latest_report_dir
 from .reports import export_report
 from .scheduler import ScheduleManager
@@ -116,29 +116,23 @@ def run_full_scan(
     except Exception as exc:  # pragma: no cover - defensive
         LOG.warning("Falling back to built-in port list: %s", exc)
         scan_ports = active_scan_ports({})
-    config = NetworkSensorConfig(
-        passive_only=not active,
-        allow_ping_sweep=active,
-        allow_tcp_port_check=active,
-        tcp_probe_all_hosts=probe_all,
-        tcp_ports=scan_ports,
-        max_hosts_per_scan=128,
-        discovery_workers=32,
-    )
     _emit(progress, "Network scan: detecting local interfaces")
-    interfaces = detect_local_interfaces(config)
+    interfaces = detect_local_interfaces()
     _emit(
         progress,
-        "Network scan: active ping sweep and TCP service checks"
+        "Network scan: multi-vector discovery with active ICMP/TCP probes"
         if active
-        else "Network scan: reading local ARP and neighbor observations",
+        else "Network scan: passive multi-vector discovery (ARP, neighbor, mDNS/SSDP)",
     )
-    devices = discover_lan_hosts(config)
+    devices = discover_lan_hosts_noc_core(
+        interfaces, active=active, probe_all=probe_all, tcp_ports=scan_ports
+    )
     _emit(progress, f"Network scan: found {len(devices)} local device(s)")
     _emit(progress, "Loading local known-device trust database")
     baseline = BaselineStore(default_baseline_path()).load()
     metadata: dict[str, Any] = {
         "mode": "active" if active else "passive",
+        "discovery_engine": "noc_core",
         "interfaces": [item.as_dict() for item in interfaces],
         "ports": list(scan_ports),
         "known_device_store": "local app data",

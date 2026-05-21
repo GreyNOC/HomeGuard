@@ -68,6 +68,7 @@ from greynoc_homeguard.virus_scanner import (  # noqa: E402
     analyze_processes,
     run_endpoint_malware_scan,
     scan_downloads,
+    scan_process_memory,
 )
 
 
@@ -172,6 +173,32 @@ class NocCoreDiscoveryTests(unittest.TestCase):
         )
         self.assertGreater(score, 0.0)
         self.assertLessEqual(score, 0.99)
+
+    def test_discover_lan_hosts_noc_core_passive_returns_devices(self):
+        from greynoc_homeguard.network import LocalInterface, discover_lan_hosts_noc_core
+
+        # Passive run over a fake private /24 exercises the interface loop,
+        # the noc_core engine, and the DiscoveryDevice -> Device conversion
+        # without emitting any active probes.
+        devices = discover_lan_hosts_noc_core(
+            [LocalInterface("test", "192.168.123.1", "192.168.123.0/24")],
+            active=False,
+            probe_all=False,
+            tcp_ports=[80, 443],
+        )
+        self.assertIsInstance(devices, list)
+        for device in devices:
+            self.assertIsInstance(device, Device)
+
+    def test_discover_lan_hosts_noc_core_narrows_oversized_subnet(self):
+        from greynoc_homeguard.network import _narrow_oversized_network
+
+        # A /16 interface exceeds the discovery size cap; it must be bounded to
+        # a /24 around the host instead of skipped, or every LAN host vanishes.
+        narrowed = _narrow_oversized_network(ipaddress.ip_network("10.0.0.0/16"), "10.0.7.42")
+        self.assertEqual(str(narrowed), "10.0.7.0/24")
+        unchanged = _narrow_oversized_network(ipaddress.ip_network("192.168.1.0/24"), "192.168.1.5")
+        self.assertEqual(str(unchanged), "192.168.1.0/24")
 
 
 class DetectionEngineTests(unittest.TestCase):
@@ -420,6 +447,42 @@ class EndpointMalwareScannerTests(unittest.TestCase):
         self.assertEqual(meta["processes_reviewed"], 1)
         self.assertTrue(any(f.category == "endpoint_process" for f in findings))
         self.assertTrue(any(f.severity == "high" for f in findings))
+
+    def test_memory_scanner_skips_homeguards_own_process(self):
+        # HomeGuard's own process holds every MEMORY_SIGNATURES marker as plain
+        # module data, so scanning it must never report the scanner as malware.
+        own_pid = os.getpid()
+        rows = [
+            {"pid": own_pid, "name": "greynoc-homeguard"},
+            {"pid": 999_001, "name": "other.exe"},
+        ]
+
+        def fake_read(_pid, **_kwargs):
+            return [b"invoke-mimikatz"]
+
+        with mock.patch(
+            "greynoc_homeguard.virus_scanner._read_process_memory", side_effect=fake_read
+        ):
+            findings, meta = scan_process_memory(rows)
+
+        self.assertTrue(meta["memory_self_process_excluded"])
+        self.assertEqual(meta["memory_processes_reviewed"], 1)
+        flagged_pids = {finding.evidence.get("pid") for finding in findings}
+        self.assertNotIn(own_pid, flagged_pids)
+        self.assertIn(999_001, flagged_pids)
+
+    def test_memory_scanner_tolerates_malformed_pid(self):
+        # A malformed PID anywhere in the input must not abort the memory scan.
+        rows = [
+            {"pid": "not-a-pid", "name": "weird.exe"},
+            {"pid": 999_002, "name": "ok.exe"},
+        ]
+        with mock.patch(
+            "greynoc_homeguard.virus_scanner._read_process_memory", return_value=[]
+        ):
+            findings, meta = scan_process_memory(rows)
+        self.assertEqual(findings, [])
+        self.assertEqual(meta["memory_processes_reviewed"], 1)
 
     def test_download_scanner_flags_recent_script_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -718,7 +781,7 @@ class ScanWorkflowTests(_AppDataMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch("greynoc_homeguard.scan_runner.detect_local_interfaces", return_value=[]):
                 with mock.patch(
-                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts_noc_core",
                     return_value=[Device(ip="192.168.1.20", hostname="router", open_ports=[80])],
                 ):
                     report, paths, entry = run_full_scan(output_dir=tmp, update_known_devices=False)
@@ -963,7 +1026,7 @@ class ScanDiffTests(unittest.TestCase):
                 return_value=[],
             ):
                 with mock.patch(
-                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts_noc_core",
                     return_value=[
                         Device(ip="192.168.1.10", hostname="router", open_ports=[80])
                     ],
@@ -973,7 +1036,7 @@ class ScanDiffTests(unittest.TestCase):
                         output_dir=out1, update_known_devices=False
                     )
                 with mock.patch(
-                    "greynoc_homeguard.scan_runner.discover_lan_hosts",
+                    "greynoc_homeguard.scan_runner.discover_lan_hosts_noc_core",
                     return_value=[
                         Device(
                             ip="192.168.1.10",

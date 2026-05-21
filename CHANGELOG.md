@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 - Active Discovery Release
+
+- Promoted the vendored saturn `_noc_core` multi-vector discovery engine to the default scan path. `run_full_scan` now discovers hosts through the engine — ARP, neighbor cache, mDNS/SSDP, and router DHCP, plus ICMP/TCP/ARP probes when Active scan is enabled — for both passive and active scans. This supersedes the conservative `discover_lan_hosts()` path that 1.1.0 deliberately kept as the default.
+- Wired the Active scan and "Probe all bounded hosts" controls end to end: the renderer toggles flow through Electron IPC and the CLI `--active` / `--probe-all` flags into `run_full_scan` and the discovery engine.
+- Added `discover_lan_hosts_noc_core()` to `greynoc_homeguard.network` — runs the engine against every detected private IPv4 interface and merges the rich `DiscoveryDevice` results into HomeGuard `Device` objects.
+- Extended `discover_local_network()` with a `tcp_ports` argument that overrides the engine's built-in inventory port set, so active TCP probes check exactly the risky ports the detection engine knows about, sourced from the live security definitions.
+- Tagged scan reports with `scan_metadata.discovery_engine = "noc_core"`.
+- Sharpened the Electron UI: squared every `border-radius` across panels, cards, buttons, inputs, chat surfaces, the scan-orb frame, and status badges for a crisp, technical look. Only the scan orb's concentric radar rings remain circular.
+- Added repository CODEOWNERS rules and a security reporting policy, and updated the contribution rules.
+- Added support for unsigned installer builds and excluded tooling directories from the dependency audit.
+
 ## 1.1.0 - Discovery Engine Release
 
 - Vendored the GreyNOC saturn `noc_core` multi-vector discovery engine (discovery.py, network_discovery.py, network_sensor.py, map_accuracy.py) into a private `_noc_core` subpackage under `src/greynoc_homeguard/`. Pure stdlib (optional psutil), no new HomeGuard runtime dependencies.

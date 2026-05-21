@@ -14,6 +14,7 @@ from ._noc_core import map_accuracy as _noc_map_accuracy
 from ._noc_core import network_discovery as _noc_net_discovery
 from ._noc_core.discovery import (
     DiscoveryDevice,
+    DiscoveryError,
     DiscoveryOptions,
     DiscoveryResult,
     guess_device_type,
@@ -563,6 +564,7 @@ def discover_local_network(
     *,
     active: bool = False,
     max_hosts: int = 128,
+    tcp_ports: list[int] | None = None,
     cancel_event: Any = None,
 ) -> DiscoveryResult:
     """Run the multi-vector discovery engine vendored from GreyNOC/saturn.
@@ -574,9 +576,12 @@ def discover_local_network(
     and active_probe_allowed() check, so a misconfigured caller can never
     accidentally reach off-LAN addresses.
 
+    ``tcp_ports`` overrides the engine's built-in inventory port set so the
+    active TCP probe checks exactly the risky ports HomeGuard's detection
+    engine knows about.
+
     Returns the rich DiscoveryResult with per-device confidence scores,
-    discovery method evidence, and device-type heuristics — richer than
-    discover_lan_hosts(), which stays the default scan path.
+    discovery method evidence, and device-type heuristics.
     """
     options = DiscoveryOptions(
         passive_only=not active,
@@ -591,6 +596,10 @@ def discover_local_network(
         max_hosts=max_hosts,
         cancel_event=cancel_event,
     )
+    if tcp_ports:
+        ports = tuple(sorted({int(port) for port in tcp_ports if 0 < int(port) <= 65535}))
+        if ports:
+            options.safe_ports = ports
     return _noc_discovery.discover_local_network(network_cidr, options)
 
 
@@ -619,3 +628,72 @@ def discovery_device_to_device(host: DiscoveryDevice | dict[str, Any]) -> Device
         vendor=vendor,
         metadata=dict(data.get("metadata") or {}),
     )
+
+
+def _narrow_oversized_network(
+    network: ipaddress.IPv4Network, anchor_ip: str
+) -> ipaddress.IPv4Network:
+    """Bound an oversized LAN to a /24 around the host so discovery accepts it.
+
+    ``discover_local_network`` rejects subnets above its safe size cap and the
+    caller swallows that error, so a /16-or-larger interface would otherwise be
+    skipped entirely and every host on that LAN would vanish from scan results.
+    """
+    if network.num_addresses <= _noc_discovery.DEFAULT_MAX_ADDRESSES:
+        return network
+    try:
+        anchor = ipaddress.ip_address(anchor_ip)
+    except ValueError:
+        anchor = None
+    if isinstance(anchor, ipaddress.IPv4Address):
+        host_24 = ipaddress.ip_network(f"{anchor}/24", strict=False)
+        if host_24.subnet_of(network):
+            return host_24
+    return ipaddress.ip_network(f"{network.network_address}/24", strict=False)
+
+
+def discover_lan_hosts_noc_core(
+    interfaces: list[LocalInterface],
+    *,
+    active: bool = False,
+    probe_all: bool = False,
+    tcp_ports: list[int] | None = None,
+) -> list[Device]:
+    """Discover LAN hosts with the vendored saturn _noc_core engine.
+
+    Runs the multi-vector discovery engine (ARP, neighbor cache, mDNS/SSDP,
+    router DHCP, plus ICMP/TCP/ARP probes when ``active``) against every
+    detected private IPv4 interface, then merges the rich DiscoveryDevice
+    records into HomeGuard ``Device`` objects. ``probe_all`` widens the
+    active host budget from a single /24 to larger bounded subnets.
+
+    This is the discovery path used by ``run_full_scan``.
+    """
+    max_hosts = 1024 if probe_all else 256
+    cidrs: list[str | None] = []
+    for interface in interfaces:
+        try:
+            network = ipaddress.ip_network(interface.cidr, strict=False)
+        except ValueError:
+            continue
+        if network.version != 4 or not is_private_or_local_network(network):
+            continue
+        network = _narrow_oversized_network(network, interface.ip)
+        key = str(network)
+        if key not in cidrs:
+            cidrs.append(key)
+    if not cidrs:
+        # No usable interface CIDR: let the engine infer the primary network.
+        cidrs.append(None)
+
+    discovered: list[Device] = []
+    for cidr in cidrs:
+        try:
+            result = discover_local_network(
+                cidr, active=active, max_hosts=max_hosts, tcp_ports=tcp_ports
+            )
+        except DiscoveryError:
+            # Subnet falls outside the safe policy (too large / public): skip it.
+            continue
+        discovered.extend(discovery_device_to_device(host) for host in result.devices)
+    return _merge_hosts(discovered)

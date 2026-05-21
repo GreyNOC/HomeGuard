@@ -210,9 +210,8 @@ if (!powersploitTests.includes("POWERSPLOIT_FUNCTION_NAMES") || !powersploitTest
 
 const scanRunner = fs.readFileSync(path.join(root, "src", "greynoc_homeguard", "scan_runner.py"), "utf8");
 if (
-  !scanRunner.includes("passive_only=not active") ||
-  !scanRunner.includes("allow_ping_sweep=active") ||
-  !scanRunner.includes("allow_tcp_port_check=active") ||
+  !scanRunner.includes("discover_lan_hosts_noc_core(") ||
+  !scanRunner.includes("active=active") ||
   !scanRunner.includes("engine.build_report")
 ) {
   throw new Error("Active scans are not wired through network discovery and the detection engine.");
