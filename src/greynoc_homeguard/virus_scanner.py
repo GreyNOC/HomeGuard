@@ -312,34 +312,40 @@ def _file_evidence(path: Path, *, source: str, sample_sha256: str | None = None)
     return evidence
 
 
-def _homeguard_own_roots() -> list[Path]:
-    """Directories that belong to HomeGuard itself.
+def _homeguard_own_paths() -> list[Path]:
+    """Filesystem paths that belong to HomeGuard itself.
 
     HomeGuard's own modules contain every detection signature as literal text
     (and install_into_virus_scanner injects dozens more), so scanning them
-    would flag the scanner itself. Files under these roots are excluded from
-    the download/content scan.
+    would flag the scanner itself. Returns the installed package directory
+    and, for frozen builds, the HomeGuard executable file.
+
+    The executable's *parent* directory is intentionally not excluded: a
+    frozen binary can be run straight from a shared folder such as
+    ~/Downloads, and excluding that whole directory would silently disable
+    the download scan for every unrelated file in it.
     """
-    roots: set[Path] = set()
+    paths: set[Path] = set()
     try:
-        roots.add(Path(__file__).resolve().parent)
+        paths.add(Path(__file__).resolve().parent)
     except OSError:
         pass
     if getattr(sys, "frozen", False):
         try:
-            roots.add(Path(sys.executable).resolve().parent)
+            paths.add(Path(sys.executable).resolve())
         except OSError:
             pass
-    return sorted(roots)
+    return sorted(paths)
 
 
-def _path_within(path: Path, roots: Iterable[Path]) -> bool:
+def _path_within(path: Path, owned: Iterable[Path]) -> bool:
+    """True when ``path`` is one of, or lives inside, the ``owned`` paths."""
     try:
         resolved = path.resolve()
     except OSError:
         return False
-    for root in roots:
-        if resolved == root or root in resolved.parents:
+    for entry in owned:
+        if resolved == entry or entry in resolved.parents:
             return True
     return False
 
@@ -358,9 +364,9 @@ def scan_downloads(
     # HomeGuard's own modules carry every detection signature as literal text,
     # so reviewing them would flag the scanner itself. Drop our own files
     # before the content scan.
-    own_roots = _homeguard_own_roots()
+    own_paths = _homeguard_own_paths()
     discovered_count = len(files)
-    files = [path for path in files if not _path_within(path, own_roots)]
+    files = [path for path in files if not _path_within(path, own_paths)]
     self_excluded = discovered_count - len(files)
     reviewed = 0
     executable_count = 0

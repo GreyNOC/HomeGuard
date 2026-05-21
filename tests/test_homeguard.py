@@ -514,6 +514,30 @@ class EndpointMalwareScannerTests(unittest.TestCase):
         self.assertEqual(meta["download_files_reviewed"], 0)
         self.assertGreater(meta["internal_files_self_excluded"], 0)
 
+    def test_download_scanner_still_scans_when_frozen_exe_shares_the_dir(self):
+        # A frozen HomeGuard.exe living directly in a scanned folder must only
+        # exclude the exe itself, never the whole folder, or the scan silently
+        # reviews zero files and misses real malware.
+        from greynoc_homeguard import virus_scanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            exe = tmp_dir / "HomeGuard.exe"
+            exe.write_bytes(b"MZ fake homeguard binary")
+            payload = tmp_dir / "invoice.js"
+            payload.write_text("WScript.Echo('test')", encoding="utf-8")
+            with (
+                mock.patch.object(virus_scanner.sys, "frozen", True, create=True),
+                mock.patch.object(virus_scanner.sys, "executable", str(exe)),
+            ):
+                findings, meta = scan_downloads([tmp_dir])
+        self.assertEqual(meta["internal_files_self_excluded"], 1)
+        self.assertGreaterEqual(meta["download_files_reviewed"], 1)
+        self.assertIn(
+            "endpoint_browser_download_executable",
+            {finding.rule_id for finding in findings},
+        )
+
     def test_endpoint_scan_does_not_launch_external_antivirus(self):
         with mock.patch("greynoc_homeguard.virus_scanner.scan_persistence", return_value=([], {"persistence_entries_reviewed": 0})):
             result = run_endpoint_malware_scan(
