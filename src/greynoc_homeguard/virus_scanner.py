@@ -16,6 +16,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -311,6 +312,44 @@ def _file_evidence(path: Path, *, source: str, sample_sha256: str | None = None)
     return evidence
 
 
+def _homeguard_own_paths() -> list[Path]:
+    """Filesystem paths that belong to HomeGuard itself.
+
+    HomeGuard's own modules contain every detection signature as literal text
+    (and install_into_virus_scanner injects dozens more), so scanning them
+    would flag the scanner itself. Returns the installed package directory
+    and, for frozen builds, the HomeGuard executable file.
+
+    The executable's *parent* directory is intentionally not excluded: a
+    frozen binary can be run straight from a shared folder such as
+    ~/Downloads, and excluding that whole directory would silently disable
+    the download scan for every unrelated file in it.
+    """
+    paths: set[Path] = set()
+    try:
+        paths.add(Path(__file__).resolve().parent)
+    except OSError:
+        pass
+    if getattr(sys, "frozen", False):
+        try:
+            paths.add(Path(sys.executable).resolve())
+        except OSError:
+            pass
+    return sorted(paths)
+
+
+def _path_within(path: Path, owned: Iterable[Path]) -> bool:
+    """True when ``path`` is one of, or lives inside, the ``owned`` paths."""
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    for entry in owned:
+        if resolved == entry or entry in resolved.parents:
+            return True
+    return False
+
+
 def scan_downloads(
     download_dirs: Iterable[Path] | None = None,
     *,
@@ -322,6 +361,13 @@ def scan_downloads(
     findings: list[Finding] = []
     dirs = list(download_dirs or default_download_dirs())
     files, inaccessible = _iter_recent_files(dirs, max_files=max_files)
+    # HomeGuard's own modules carry every detection signature as literal text,
+    # so reviewing them would flag the scanner itself. Drop our own files
+    # before the content scan.
+    own_paths = _homeguard_own_paths()
+    discovered_count = len(files)
+    files = [path for path in files if not _path_within(path, own_paths)]
+    self_excluded = discovered_count - len(files)
     reviewed = 0
     executable_count = 0
     content_hits = 0
@@ -446,6 +492,7 @@ def scan_downloads(
         "internal_file_scan_sampled_bytes": sampled_bytes,
         "internal_file_scan_truncated_files": truncated_count,
         "internal_file_scan_content_hits": content_hits,
+        "internal_files_self_excluded": self_excluded,
         "inaccessible_download_files": inaccessible,
     }
 
