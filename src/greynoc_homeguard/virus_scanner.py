@@ -16,6 +16,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -311,6 +312,38 @@ def _file_evidence(path: Path, *, source: str, sample_sha256: str | None = None)
     return evidence
 
 
+def _homeguard_own_roots() -> list[Path]:
+    """Directories that belong to HomeGuard itself.
+
+    HomeGuard's own modules contain every detection signature as literal text
+    (and install_into_virus_scanner injects dozens more), so scanning them
+    would flag the scanner itself. Files under these roots are excluded from
+    the download/content scan.
+    """
+    roots: set[Path] = set()
+    try:
+        roots.add(Path(__file__).resolve().parent)
+    except OSError:
+        pass
+    if getattr(sys, "frozen", False):
+        try:
+            roots.add(Path(sys.executable).resolve().parent)
+        except OSError:
+            pass
+    return sorted(roots)
+
+
+def _path_within(path: Path, roots: Iterable[Path]) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    for root in roots:
+        if resolved == root or root in resolved.parents:
+            return True
+    return False
+
+
 def scan_downloads(
     download_dirs: Iterable[Path] | None = None,
     *,
@@ -322,6 +355,13 @@ def scan_downloads(
     findings: list[Finding] = []
     dirs = list(download_dirs or default_download_dirs())
     files, inaccessible = _iter_recent_files(dirs, max_files=max_files)
+    # HomeGuard's own modules carry every detection signature as literal text,
+    # so reviewing them would flag the scanner itself. Drop our own files
+    # before the content scan.
+    own_roots = _homeguard_own_roots()
+    discovered_count = len(files)
+    files = [path for path in files if not _path_within(path, own_roots)]
+    self_excluded = discovered_count - len(files)
     reviewed = 0
     executable_count = 0
     content_hits = 0
@@ -446,6 +486,7 @@ def scan_downloads(
         "internal_file_scan_sampled_bytes": sampled_bytes,
         "internal_file_scan_truncated_files": truncated_count,
         "internal_file_scan_content_hits": content_hits,
+        "internal_files_self_excluded": self_excluded,
         "inaccessible_download_files": inaccessible,
     }
 

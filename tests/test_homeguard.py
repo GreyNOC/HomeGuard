@@ -503,6 +503,17 @@ class EndpointMalwareScannerTests(unittest.TestCase):
         self.assertIn("endpoint_internal_file_signature", rule_ids)
         self.assertGreaterEqual(meta["internal_file_scan_content_hits"], 1)
 
+    def test_download_scanner_excludes_homeguards_own_files(self):
+        # HomeGuard's own modules contain every detection signature as literal
+        # text; pointing the scanner at its own package must flag nothing.
+        import greynoc_homeguard
+
+        package_dir = Path(greynoc_homeguard.__file__).resolve().parent
+        findings, meta = scan_downloads([package_dir])
+        self.assertEqual(findings, [])
+        self.assertEqual(meta["download_files_reviewed"], 0)
+        self.assertGreater(meta["internal_files_self_excluded"], 0)
+
     def test_endpoint_scan_does_not_launch_external_antivirus(self):
         with mock.patch("greynoc_homeguard.virus_scanner.scan_persistence", return_value=([], {"persistence_entries_reviewed": 0})):
             result = run_endpoint_malware_scan(
