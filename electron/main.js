@@ -919,6 +919,244 @@ ipcMain.handle("homeguard:show-item", async (_event, targetPath) => {
   return { ok: true };
 });
 
+// =============================================================
+// Chat history (Ask GreyNOC conversation persistence)
+// -------------------------------------------------------------
+// Chats are stored as a single JSON file under appData. Each chat
+// is a list of {role, content, ts} messages plus a title and
+// timestamps. The renderer drives all writes via IPC; main.js is
+// the only process that touches the file so we have one
+// well-defined sanitization point and no race against scans.
+// =============================================================
+
+const CHATS_SCHEMA_VERSION = "1.0";
+const MAX_CHATS = 100;
+const MAX_MESSAGES_PER_CHAT = 200;
+const MAX_MESSAGE_LEN = 8192;
+const MAX_TITLE_LEN = 120;
+const MAX_CHAT_ID_LEN = 64;
+const VALID_CHAT_ROLES = new Set(["user", "assistant"]);
+const VALID_CHAT_ID_RE = /^chat-[a-z0-9]{6,32}$/;
+
+function chatsPath() {
+  return appDataPath("chats", "chats.json");
+}
+
+function emptyChatStore() {
+  return { schema_version: CHATS_SCHEMA_VERSION, active_chat_id: "", chats: [] };
+}
+
+function chatTitleFromMessages(messages) {
+  const firstUser = Array.isArray(messages) ? messages.find((m) => m && m.role === "user") : null;
+  if (!firstUser) {
+    return "";
+  }
+  const raw = String(firstUser.content || "").replace(/\s+/g, " ").trim();
+  return raw.slice(0, 60);
+}
+
+function sanitizeChatMessage(message) {
+  if (!isPlainObject(message)) {
+    return null;
+  }
+  const role = String(message.role || "").trim().toLowerCase();
+  if (!VALID_CHAT_ROLES.has(role)) {
+    return null;
+  }
+  const content = cleanString(message.content, MAX_MESSAGE_LEN);
+  if (!content) {
+    return null;
+  }
+  const ts = typeof message.ts === "string" && message.ts.length <= 32 ? message.ts : utcNow();
+  return { role, content, ts };
+}
+
+function sanitizeChat(chat) {
+  if (!isPlainObject(chat)) {
+    return null;
+  }
+  const id = String(chat.id || "").trim();
+  if (!VALID_CHAT_ID_RE.test(id)) {
+    return null;
+  }
+  const messages = Array.isArray(chat.messages)
+    ? chat.messages.map(sanitizeChatMessage).filter(Boolean).slice(-MAX_MESSAGES_PER_CHAT)
+    : [];
+  const created_at = typeof chat.created_at === "string" && chat.created_at.length <= 32
+    ? chat.created_at
+    : utcNow();
+  const updated_at = typeof chat.updated_at === "string" && chat.updated_at.length <= 32
+    ? chat.updated_at
+    : created_at;
+  let title = cleanString(chat.title, MAX_TITLE_LEN);
+  if (!title) {
+    title = chatTitleFromMessages(messages) || "New chat";
+  }
+  return { id, title, created_at, updated_at, messages };
+}
+
+function readChatStore() {
+  const data = readJson(chatsPath(), emptyChatStore());
+  if (!isPlainObject(data)) {
+    return emptyChatStore();
+  }
+  const chats = Array.isArray(data.chats) ? data.chats.map(sanitizeChat).filter(Boolean) : [];
+  let active_chat_id = typeof data.active_chat_id === "string" && VALID_CHAT_ID_RE.test(data.active_chat_id)
+    ? data.active_chat_id
+    : "";
+  if (active_chat_id && !chats.some((c) => c.id === active_chat_id)) {
+    active_chat_id = "";
+  }
+  return { schema_version: CHATS_SCHEMA_VERSION, active_chat_id, chats };
+}
+
+function writeChatStore(store) {
+  const chats = Array.isArray(store.chats) ? store.chats.map(sanitizeChat).filter(Boolean) : [];
+  let active_chat_id = store.active_chat_id && VALID_CHAT_ID_RE.test(store.active_chat_id)
+    ? store.active_chat_id
+    : "";
+  if (active_chat_id && !chats.some((c) => c.id === active_chat_id)) {
+    active_chat_id = "";
+  }
+  const safe = { schema_version: CHATS_SCHEMA_VERSION, active_chat_id, chats };
+  writeJson(chatsPath(), safe);
+  return safe;
+}
+
+function generateChatId() {
+  const ts = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 10).padEnd(8, "0");
+  return `chat-${ts}${rand}`.slice(0, 32);
+}
+
+function chatSummary(chat) {
+  return {
+    id: chat.id,
+    title: chat.title,
+    created_at: chat.created_at,
+    updated_at: chat.updated_at,
+    message_count: Array.isArray(chat.messages) ? chat.messages.length : 0,
+  };
+}
+
+function sortChatsByUpdated(chats) {
+  return [...chats].sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+}
+
+ipcMain.handle("homeguard:chats-list", async () => {
+  const store = readChatStore();
+  return {
+    ok: true,
+    chats: sortChatsByUpdated(store.chats).map(chatSummary),
+    active_chat_id: store.active_chat_id,
+  };
+});
+
+ipcMain.handle("homeguard:chats-get", async (_event, id) => {
+  const safeId = cleanString(id, MAX_CHAT_ID_LEN);
+  if (!VALID_CHAT_ID_RE.test(safeId)) {
+    return { ok: false, message: "Invalid chat id." };
+  }
+  const store = readChatStore();
+  const chat = store.chats.find((c) => c.id === safeId);
+  if (!chat) {
+    return { ok: false, message: "Chat not found." };
+  }
+  return { ok: true, chat };
+});
+
+ipcMain.handle("homeguard:chats-save", async (_event, payload = {}) => {
+  if (!isPlainObject(payload)) {
+    return { ok: false, message: "Invalid chat payload." };
+  }
+  const store = readChatStore();
+  const now = utcNow();
+  let id = cleanString(payload.id, MAX_CHAT_ID_LEN);
+  if (!VALID_CHAT_ID_RE.test(id)) {
+    id = generateChatId();
+  }
+  const incomingMessages = Array.isArray(payload.messages)
+    ? payload.messages.map(sanitizeChatMessage).filter(Boolean).slice(-MAX_MESSAGES_PER_CHAT)
+    : [];
+  const existing = store.chats.find((c) => c.id === id);
+  const created_at = existing ? existing.created_at : now;
+  let title = cleanString(payload.title, MAX_TITLE_LEN);
+  if (!title) {
+    title = (existing && existing.title) || chatTitleFromMessages(incomingMessages) || "New chat";
+  }
+  const chat = { id, title, created_at, updated_at: now, messages: incomingMessages };
+  if (existing) {
+    Object.assign(existing, chat);
+  } else {
+    store.chats.push(chat);
+  }
+  if (store.chats.length > MAX_CHATS) {
+    const sorted = sortChatsByUpdated(store.chats);
+    const kept = new Set(sorted.slice(0, MAX_CHATS).map((c) => c.id));
+    store.chats = store.chats.filter((c) => kept.has(c.id));
+  }
+  store.active_chat_id = id;
+  writeChatStore(store);
+  return { ok: true, chat: chatSummary(chat), active_chat_id: id };
+});
+
+ipcMain.handle("homeguard:chats-delete", async (_event, id) => {
+  const safeId = cleanString(id, MAX_CHAT_ID_LEN);
+  if (!VALID_CHAT_ID_RE.test(safeId)) {
+    return { ok: false, message: "Invalid chat id." };
+  }
+  const store = readChatStore();
+  const before = store.chats.length;
+  store.chats = store.chats.filter((c) => c.id !== safeId);
+  if (store.chats.length === before) {
+    return { ok: false, message: "Chat not found." };
+  }
+  if (store.active_chat_id === safeId) {
+    const sorted = sortChatsByUpdated(store.chats);
+    store.active_chat_id = sorted[0]?.id || "";
+  }
+  writeChatStore(store);
+  return {
+    ok: true,
+    active_chat_id: store.active_chat_id,
+    chats: sortChatsByUpdated(store.chats).map(chatSummary),
+  };
+});
+
+ipcMain.handle("homeguard:chats-set-active", async (_event, id) => {
+  const safeId = cleanString(id, MAX_CHAT_ID_LEN);
+  if (safeId && !VALID_CHAT_ID_RE.test(safeId)) {
+    return { ok: false, message: "Invalid chat id." };
+  }
+  const store = readChatStore();
+  if (safeId && !store.chats.some((c) => c.id === safeId)) {
+    return { ok: false, message: "Chat not found." };
+  }
+  store.active_chat_id = safeId;
+  writeChatStore(store);
+  return { ok: true, active_chat_id: store.active_chat_id };
+});
+
+ipcMain.handle("homeguard:chats-rename", async (_event, id, title) => {
+  const safeId = cleanString(id, MAX_CHAT_ID_LEN);
+  if (!VALID_CHAT_ID_RE.test(safeId)) {
+    return { ok: false, message: "Invalid chat id." };
+  }
+  const safeTitle = cleanString(title, MAX_TITLE_LEN);
+  if (!safeTitle) {
+    return { ok: false, message: "Title cannot be empty." };
+  }
+  const store = readChatStore();
+  const chat = store.chats.find((c) => c.id === safeId);
+  if (!chat) {
+    return { ok: false, message: "Chat not found." };
+  }
+  chat.title = safeTitle;
+  chat.updated_at = utcNow();
+  writeChatStore(store);
+  return { ok: true, chat: chatSummary(chat) };
+});
+
 registerReportAssistantIpc();
 
 app.whenReady().then(createWindow);
