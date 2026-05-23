@@ -500,7 +500,14 @@ textarea:focus-visible {
 
 .chat-page {
   display: none;
+  /* Constrain the single grid row to the available height so the right
+     panel's overflow:auto actually scrolls instead of pushing the row past
+     .workspace's overflow:hidden cap. Without minmax(0, 1fr) the implicit
+     row sizes to content and tall right-panel content gets clipped in
+     windowed mode (the "Not scanned" card and "Latest Report" buttons
+     disappear behind the titlebar / off the bottom of the window). */
   grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   padding: 16px;
 }
@@ -715,6 +722,11 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  /* min-height: 0 is required so this flex container is allowed to shrink
+     below the natural height of its children. Without it, the panel grows
+     to fit content and overflow:auto never engages, so windowed-mode users
+     see cut-off cards at top and bottom. */
+  min-height: 0;
   overflow: auto;
   padding-right: 2px;
 }
