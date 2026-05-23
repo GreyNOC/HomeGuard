@@ -1,31 +1,33 @@
 /* ============================================================
-   GreyNOC renderer - deep navy network command surface.
+   HomeGuard renderer - warm-dark crisp surface.
+   Palette tuned for crisp lines and easy-to-read text;
+   structure (icons, brand mark, layout) inherited intact.
    Scan orb geometry is finalized in scan-indicator.css.
    ============================================================ */
 
 :root {
-  --app-bg: #03101d;
-  --sidebar-bg: #061525;
-  --titlebar-bg: #020a12;
-  --surface: #081a2b;
-  --surface-raised: #0d2338;
-  --surface-soft: #061420;
-  --surface-hover: #102b46;
-  --border: #164061;
-  --border-strong: #2a6f99;
-  --text: #f4fbff;
-  --muted: #a8c8dc;
-  --subtle: #6f93ab;
-  --accent: #40d9ff;
-  --accent-hover: #78e9ff;
-  --accent-soft: rgba(64, 217, 255, 0.16);
-  --accent-strong: #0b91ff;
-  --danger: #ff526e;
-  --danger-hover: #ff7189;
-  --scan: #0b91ff;
-  --scan-hover: #34c7ff;
-  --success: #74f9b9;
-  --warning: #ffd76a;
+  --app-bg: #1b1a18;
+  --sidebar-bg: #151311;
+  --titlebar-bg: #121110;
+  --surface: #232220;
+  --surface-raised: #2b2926;
+  --surface-soft: #1e1d1b;
+  --surface-hover: #312f2b;
+  --border: #322f2b;
+  --border-strong: #4a4641;
+  --text: #f3f1ec;
+  --muted: #b4ada3;
+  --subtle: #847e72;
+  --accent: #4a8fe0;
+  --accent-hover: #66a3ec;
+  --accent-soft: rgba(74, 143, 224, 0.16);
+  --accent-strong: #3b82f6;
+  --danger: #e2564b;
+  --danger-hover: #ec6a60;
+  --scan: #e0444a;
+  --scan-hover: #ec5a5f;
+  --success: #4ec07d;
+  --warning: #e2ad48;
   --brand-white: #ffffff;
   --radius: 8px;
   --radius-sm: 6px;
@@ -44,7 +46,7 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    linear-gradient(180deg, #04182b 0%, #03101d 48%, #020912 100%);
+    linear-gradient(180deg, #1f1d1a 0%, #1b1a18 48%, #151311 100%);
   color: var(--text);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -63,13 +65,13 @@ textarea:focus-visible {
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(64, 217, 255, 0.2);
+  background: rgba(180, 173, 163, 0.2);
   border: 3px solid transparent;
   border-radius: 8px;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(120, 233, 255, 0.34);
+  background: rgba(210, 203, 193, 0.32);
   background-clip: padding-box;
 }
 
