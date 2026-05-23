@@ -28,5 +28,13 @@ contextBridge.exposeInMainWorld("homeguard", {
   openPath: (targetPath) => ipcRenderer.invoke("homeguard:open-path", targetPath),
   showItem: (targetPath) => ipcRenderer.invoke("homeguard:show-item", targetPath),
   windowAction: (action) => ipcRenderer.invoke("homeguard:window-action", action),
+  chats: {
+    list: () => ipcRenderer.invoke("homeguard:chats-list"),
+    get: (id) => ipcRenderer.invoke("homeguard:chats-get", id),
+    save: (chat) => ipcRenderer.invoke("homeguard:chats-save", chat),
+    delete: (id) => ipcRenderer.invoke("homeguard:chats-delete", id),
+    setActive: (id) => ipcRenderer.invoke("homeguard:chats-set-active", id),
+    rename: (id, title) => ipcRenderer.invoke("homeguard:chats-rename", id, title),
+  },
   platform: process.platform,
 });

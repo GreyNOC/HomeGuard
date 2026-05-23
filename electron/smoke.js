@@ -105,6 +105,12 @@ for (const channel of [
   "homeguard:minimize-to-tray",
   "homeguard:save-html-as",
   "homeguard:admin-access",
+  "homeguard:chats-list",
+  "homeguard:chats-get",
+  "homeguard:chats-save",
+  "homeguard:chats-delete",
+  "homeguard:chats-set-active",
+  "homeguard:chats-rename",
 ]) {
   if (!main.includes(channel)) {
     throw new Error(`Missing IPC channel ${channel}`);
@@ -129,6 +135,7 @@ for (const apiName of [
   "minimizeToTray",
   "saveHtmlAs",
   "windowAction",
+  "chats",
 ]) {
   if (!preload.includes(`${apiName}:`)) {
     throw new Error(`Missing preload API ${apiName}`);
@@ -138,6 +145,9 @@ for (const apiName of [
 const indexHtml = fs.readFileSync(path.join(root, "electron", "renderer", "index.html"), "utf8");
 if (!indexHtml.includes("chatMessages") || !indexHtml.includes("chatForm") || !indexHtml.includes("chat-assistant.js")) {
   throw new Error("Renderer HTML is not wired as a chat assistant surface.");
+}
+if (!indexHtml.includes("chatList") || !indexHtml.includes("chats-section")) {
+  throw new Error("Renderer HTML is missing the chat history sidebar list.");
 }
 
 const css = fs.readFileSync(path.join(root, "electron", "renderer", "styles.css"), "utf8");
@@ -187,6 +197,11 @@ for (const expected of [
 }
 if (chatAssistant.includes("The next phase will connect this chat directly to report JSON")) {
   throw new Error("Chat assistant still contains placeholder report-answer text.");
+}
+for (const symbol of ["bootChatHistory", "loadChat", "startNewChat", "deleteChat", "renameChat", "persistNow"]) {
+  if (!chatAssistant.includes(symbol)) {
+    throw new Error(`Chat history wiring is missing: ${symbol}`);
+  }
 }
 for (const placeholder of ["next phase", "upcoming command router", "lorem ipsum", "mock data"]) {
   if (chatAssistant.toLowerCase().includes(placeholder)) {

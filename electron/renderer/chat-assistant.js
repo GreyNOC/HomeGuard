@@ -8,6 +8,327 @@
     return;
   }
 
+  const chatList = document.getElementById("chatList");
+  const chatListEmpty = document.getElementById("chatListEmpty");
+  const welcomeMessage = chatMessages.querySelector(".message.assistant-message");
+  const chatsApi = window.homeguard?.chats || null;
+
+  // ----- Chat persistence state -----
+  // currentChatId is "" before the first message of a fresh chat; it gets
+  // assigned the moment the backend persists the chat via chats.save.
+  let currentChatId = "";
+  let currentMessages = [];
+  let cachedSummaries = [];
+  let saveTimer = null;
+  let saveInFlight = false;
+  let saveDirty = false;
+  const SAVE_DEBOUNCE_MS = 350;
+  const MAX_LIVE_MESSAGES = 200;
+
+  function showWelcome(show) {
+    if (welcomeMessage) {
+      welcomeMessage.classList.toggle("hidden", !show);
+    }
+  }
+
+  function clearMessageDom() {
+    // Remove every dynamically-added message but keep the welcome card so
+    // its prompt-chip handlers stay bound; toggle its visibility separately.
+    chatMessages.querySelectorAll(".message").forEach((node) => {
+      if (node !== welcomeMessage) {
+        node.remove();
+      }
+    });
+  }
+
+  function recordMessage(role, text) {
+    currentMessages.push({ role, content: String(text || ""), ts: new Date().toISOString() });
+    if (currentMessages.length > MAX_LIVE_MESSAGES) {
+      currentMessages = currentMessages.slice(-MAX_LIVE_MESSAGES);
+    }
+    showWelcome(false);
+    scheduleSave();
+  }
+
+  function updateLastMessage(text) {
+    if (!currentMessages.length) {
+      recordMessage("assistant", text);
+      return;
+    }
+    const last = currentMessages[currentMessages.length - 1];
+    last.content = String(text || "");
+    last.ts = new Date().toISOString();
+    scheduleSave();
+  }
+
+  function scheduleSave() {
+    if (!chatsApi || !currentMessages.length) return;
+    if (saveInFlight) {
+      saveDirty = true;
+      return;
+    }
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persistNow().catch(() => {});
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  async function persistNow() {
+    if (!chatsApi || !currentMessages.length) return;
+    if (saveInFlight) {
+      // Another save is already on the wire; mark dirty so the in-flight
+      // save's finally-block kicks off a follow-up once it returns.
+      saveDirty = true;
+      return;
+    }
+    saveInFlight = true;
+    saveDirty = false;
+    try {
+      const payload = {
+        id: currentChatId || undefined,
+        messages: currentMessages,
+      };
+      const result = await chatsApi.save(payload);
+      if (result && result.ok && result.chat && result.chat.id) {
+        currentChatId = result.chat.id;
+        await refreshChatList();
+      }
+    } catch (_) {
+      // Persistence failures are non-fatal for the chat UX; the next call
+      // will retry. We deliberately don't surface a toast - chat history
+      // is a convenience feature, not a security gate.
+    } finally {
+      saveInFlight = false;
+      if (saveDirty) {
+        saveDirty = false;
+        // Re-arm the debounced save so the latest message state lands.
+        scheduleSave();
+      }
+    }
+  }
+
+  function relativeTime(iso) {
+    const then = new Date(iso);
+    if (Number.isNaN(then.getTime())) return "";
+    const diff = Math.max(0, Date.now() - then.getTime());
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h`;
+    const day = Math.floor(hr / 24);
+    if (day < 7) return `${day}d`;
+    const wk = Math.floor(day / 7);
+    if (wk < 5) return `${wk}w`;
+    const mo = Math.floor(day / 30);
+    if (mo < 12) return `${mo}mo`;
+    const yr = Math.floor(day / 365);
+    return `${yr}y`;
+  }
+
+  function renderChatList() {
+    if (!chatList) return;
+    chatList.textContent = "";
+    if (chatListEmpty) {
+      chatListEmpty.style.display = cachedSummaries.length ? "none" : "";
+    }
+    for (const summary of cachedSummaries) {
+      const row = document.createElement("div");
+      row.className = "chat-list-item";
+      row.dataset.chatId = summary.id;
+      if (summary.id === currentChatId) {
+        row.classList.add("is-active");
+      }
+
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "chat-list-item-main";
+      const title = document.createElement("span");
+      title.className = "chat-list-item-title";
+      title.textContent = summary.title || "New chat";
+      const time = document.createElement("span");
+      time.className = "chat-list-item-time";
+      time.textContent = relativeTime(summary.updated_at);
+      main.appendChild(title);
+      main.appendChild(time);
+      main.addEventListener("click", () => {
+        loadChat(summary.id).catch(() => {});
+      });
+
+      const renameBtn = document.createElement("button");
+      renameBtn.type = "button";
+      renameBtn.className = "chat-list-action chat-list-rename";
+      renameBtn.setAttribute("aria-label", "Rename chat");
+      renameBtn.title = "Rename";
+      renameBtn.textContent = "✎"; // pencil glyph
+      renameBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        renameChat(summary.id, summary.title).catch(() => {});
+      });
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "chat-list-action chat-list-delete";
+      deleteBtn.setAttribute("aria-label", "Delete chat");
+      deleteBtn.title = "Delete";
+      deleteBtn.textContent = "×"; // × glyph
+      deleteBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        deleteChat(summary.id).catch(() => {});
+      });
+
+      row.appendChild(main);
+      row.appendChild(renameBtn);
+      row.appendChild(deleteBtn);
+      chatList.appendChild(row);
+    }
+  }
+
+  async function refreshChatList() {
+    if (!chatsApi) return;
+    try {
+      const result = await chatsApi.list();
+      cachedSummaries = Array.isArray(result && result.chats) ? result.chats : [];
+    } catch {
+      cachedSummaries = [];
+    }
+    renderChatList();
+  }
+
+  function renderRestoredMessage(role, text) {
+    // Mirrors addMessage's DOM output but does NOT push into currentMessages
+    // - used when restoring a saved chat where the state array is already set.
+    const article = document.createElement("article");
+    article.className = `message ${role === "user" ? "user-message" : "assistant-message"}`;
+    const avatar = document.createElement("div");
+    avatar.className = role === "user" ? "avatar user-avatar" : "avatar assistant-avatar";
+    avatar.textContent = role === "user" ? "You" : "";
+    if (role !== "user") {
+      avatar.setAttribute("aria-hidden", "true");
+    }
+    const card = document.createElement("div");
+    card.className = "message-card";
+    String(text || "")
+      .split("\n")
+      .filter((line) => line.trim().length)
+      .forEach((line) => {
+        const p = document.createElement("p");
+        p.textContent = line;
+        card.appendChild(p);
+      });
+    article.appendChild(avatar);
+    article.appendChild(card);
+    chatMessages.appendChild(article);
+  }
+
+  async function loadChat(id) {
+    if (!chatsApi || !id || id === currentChatId) return;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      await persistNow();
+    }
+    try {
+      const result = await chatsApi.get(id);
+      if (!result || !result.ok || !result.chat) return;
+      currentChatId = result.chat.id;
+      currentMessages = Array.isArray(result.chat.messages) ? result.chat.messages.slice() : [];
+      clearMessageDom();
+      showWelcome(currentMessages.length === 0);
+      for (const message of currentMessages) {
+        renderRestoredMessage(message.role, message.content);
+      }
+      scrollChat();
+      chatsApi.setActive(id).catch(() => {});
+      renderChatList();
+    } catch {
+      // ignore - the previous chat stays loaded on failure
+    }
+  }
+
+  async function startNewChat() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      await persistNow();
+    }
+    currentChatId = "";
+    currentMessages = [];
+    clearMessageDom();
+    showWelcome(true);
+    chatInput.value = "";
+    setChatInputHeight();
+    chatInput.focus();
+    if (chatsApi) {
+      chatsApi.setActive("").catch(() => {});
+    }
+    renderChatList();
+  }
+
+  async function deleteChat(id) {
+    if (!chatsApi || !id) return;
+    const target = cachedSummaries.find((s) => s.id === id);
+    const label = (target && target.title) || "this chat";
+    if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
+    try {
+      const result = await chatsApi.delete(id);
+      if (!result || !result.ok) return;
+      cachedSummaries = Array.isArray(result.chats)
+        ? result.chats
+        : cachedSummaries.filter((s) => s.id !== id);
+      if (currentChatId === id) {
+        currentChatId = "";
+        currentMessages = [];
+        if (result.active_chat_id) {
+          await loadChat(result.active_chat_id);
+        } else {
+          await startNewChat();
+        }
+      } else {
+        renderChatList();
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function renameChat(id, currentTitle) {
+    if (!chatsApi || !id) return;
+    const next = window.prompt("Rename chat:", currentTitle || "");
+    if (next === null) return;
+    const title = next.trim();
+    if (!title) return;
+    try {
+      const result = await chatsApi.rename(id, title);
+      if (!result || !result.ok) return;
+      await refreshChatList();
+    } catch {
+      // ignore
+    }
+  }
+
+  async function bootChatHistory() {
+    if (!chatsApi) {
+      // Older build without the chats IPC: leave the welcome visible and
+      // skip persistence. The chat surface still works in-memory.
+      return;
+    }
+    try {
+      const result = await chatsApi.list();
+      cachedSummaries = Array.isArray(result && result.chats) ? result.chats : [];
+      renderChatList();
+      const active = result && result.active_chat_id;
+      if (active && cachedSummaries.some((s) => s.id === active)) {
+        await loadChat(active);
+      }
+    } catch {
+      // Boot-time persistence failures are non-fatal - the user can still
+      // chat; the next save attempt will recreate the file.
+    }
+  }
+
   const SEVERITY_RANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
 
   function scrollChat() {
@@ -40,6 +361,11 @@
     article.appendChild(card);
     chatMessages.appendChild(article);
     scrollChat();
+    // Record into the persistence state. scan-progress-chat.js creates
+    // its own message articles via direct DOM manipulation and does NOT
+    // call addMessage, so live scan progress noise never lands in saved
+    // chat history.
+    recordMessage(role, text);
     return article;
   }
 
@@ -58,6 +384,7 @@
         card.appendChild(paragraph);
       });
     scrollChat();
+    updateLastMessage(text);
     return article;
   }
 
@@ -412,10 +739,11 @@
 
   if (newChatButton) {
     newChatButton.addEventListener("click", () => {
-      chatMessages.querySelectorAll(".message:not(:first-child)").forEach((message) => message.remove());
-      chatInput.value = "";
-      setChatInputHeight();
-      chatInput.focus();
+      startNewChat().catch(() => {});
     });
   }
+
+  // Restore the active chat from disk (or start fresh if there isn't one)
+  // once the renderer has wired everything else up.
+  bootChatHistory().catch(() => {});
 })();
