@@ -25,6 +25,7 @@ from ._noc_core.map_accuracy import (
     recompute_confidence,
     source_count,
 )
+from .device_resolution import extended_vendor_from_mac, resolve_devices
 from .models import Device
 
 
@@ -556,7 +557,7 @@ def discover_lan_hosts(config: NetworkSensorConfig | None = None) -> list[Device
                 except Exception:
                     continue
         hosts.extend(active_results)
-    return _merge_hosts(hosts)
+    return resolve_devices(_merge_hosts(hosts))
 
 
 def discover_local_network(
@@ -595,6 +596,12 @@ def discover_local_network(
         allow_large_subnet=False,
         max_hosts=max_hosts,
         cancel_event=cancel_event,
+        # Wider reverse-DNS + NetBIOS budget so home networks of 15-30 devices
+        # actually get hostnames resolved. The engine default (8 lookups at
+        # 0.08s each) is tuned for fast SOC sweeps; a desktop home scanner
+        # can afford to wait long enough to name every host it sees.
+        reverse_dns_budget=64,
+        reverse_dns_timeout=0.5,
     )
     if tcp_ports:
         ports = tuple(sorted({int(port) for port in tcp_ports if 0 < int(port) <= 65535}))
@@ -609,14 +616,39 @@ def confidence_score(device: dict[str, Any]) -> float:
 
 
 def discovery_device_to_device(host: DiscoveryDevice | dict[str, Any]) -> Device:
-    """Convert a saturn DiscoveryDevice / dict into HomeGuard's Device model."""
+    """Convert a saturn DiscoveryDevice / dict into HomeGuard's Device model.
+
+    Preserves the engine's classification output so downstream resolution can
+    act on it:
+
+      * Vendor: prefer the engine's OUI hint (a richer lookup than this
+        module's small ``COMMON_VENDOR_PREFIXES``); fall back to the local
+        prefix table, then to the extended OUI table in ``device_resolution``.
+      * Device type: copy the engine's per-host type guess into
+        ``metadata['device_type_guess']`` so ``classify_device`` can consume it.
+      * Services / discovered_by / hints: copy into metadata for the
+        classifier and report generators.
+    """
     if isinstance(host, DiscoveryDevice):
         data = host.as_dict() if hasattr(host, "as_dict") else host.__dict__
     else:
         data = host
     mac_raw = data.get("mac_address") or data.get("mac") or ""
     mac = normalize_mac(mac_raw) if mac_raw else ""
-    vendor = vendor_from_mac(mac) if mac else data.get("vendor", "")
+
+    engine_vendor = str(data.get("vendor") or "").strip()
+    local_vendor = vendor_from_mac(mac) if mac else ""
+    extended_vendor = extended_vendor_from_mac(mac) if mac else ""
+    vendor = engine_vendor or local_vendor or extended_vendor
+
+    metadata = dict(data.get("metadata") or {})
+    engine_type = str(data.get("type") or data.get("type_guess") or "").strip()
+    if engine_type:
+        metadata.setdefault("device_type_guess", engine_type)
+    for key in ("services", "discovered_by", "device_hints", "confidence_score", "evidence_level"):
+        if key in data and data[key] not in (None, "", []):
+            metadata.setdefault(key, data[key])
+
     return Device(
         ip=data.get("ip", ""),
         mac_address=mac,
@@ -626,7 +658,7 @@ def discovery_device_to_device(host: DiscoveryDevice | dict[str, Any]) -> Device
         status=data.get("status", "observed"),
         open_ports=list(data.get("open_ports") or data.get("ports") or []),
         vendor=vendor,
-        metadata=dict(data.get("metadata") or {}),
+        metadata=metadata,
     )
 
 
@@ -696,4 +728,9 @@ def discover_lan_hosts_noc_core(
             # Subnet falls outside the safe policy (too large / public): skip it.
             continue
         discovered.extend(discovery_device_to_device(host) for host in result.devices)
-    return _merge_hosts(discovered)
+    # Run the strong device-host resolution pass: fills metadata with a
+    # classified device_type + confidence, enriches vendor via the extended
+    # OUI table when both the engine and local table missed, and synthesizes
+    # a friendly hostname fallback for MAC-anchored devices that returned no
+    # reverse-DNS / NBNS / mDNS name.
+    return resolve_devices(_merge_hosts(discovered))

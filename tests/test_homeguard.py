@@ -743,10 +743,11 @@ class ReportExportTests(unittest.TestCase):
             report = HomeGuardEngine().build_report([Device(ip="192.168.1.1", open_ports=[80])])
             paths = export_report(report, tmp)
             html = paths["html"].read_text(encoding="utf-8")
-            self.assertIn("background: #05070A", html)
-            self.assertIn("background: #0B0F16", html)
-            self.assertIn("background:#174EA6", html)
-            self.assertNotIn("linear-gradient", html)
+            self.assertIn("background: #03101D", html)
+            self.assertIn("background: #081A2B", html)
+            self.assertIn("background:#0B91FF", html)
+            self.assertIn("brand-mark", html)
+            self.assertIn("GreyNOC", html)
 
     def test_exported_reports_are_share_safe(self):
         with tempfile.TemporaryDirectory() as tmp:

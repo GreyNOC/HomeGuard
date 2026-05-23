@@ -1,12 +1,12 @@
 /*
- * GreyNOC scan orb — Three.js WebGL indicator.
+ * GreyNOC scan orb - Three.js WebGL indicator.
  *
- * Renders a neural-sentinel core inside the existing `.scan-orb` slot:
- *   - faceted icosahedron core with shifting emissive color
- *   - wireframe lattice shell with additive blending
- *   - multi-ring synapse particles, palette-tinted
- *   - occasional synapse flashes drawn as additive line segments
- *   - outer tracking ring (thin torus)
+ * Renders the new GreyNOC network sphere inside the existing `.scan-orb` slot:
+ *   - faceted blue icosahedron core
+ *   - white/cyan wireframe lattice shell with additive blending
+ *   - multi-ring node particles
+ *   - occasional signal flashes drawn as additive line segments
+ *   - outer tracking ring
  *
  * State:
  *   - idle:   slow rotation, sparse firings, soft glow
@@ -19,21 +19,19 @@
   "use strict";
 
   const PALETTE = {
-    cyan: 0x7df1ff,
-    blue: 0x4ea1ff,
-    violet: 0xc66cff,
-    gold: 0xffe769,
-    green: 0x72ffbd,
-    red: 0xff5470,
+    white: 0xffffff,
+    ice: 0xdffbff,
+    cyan: 0x91f6ff,
+    blue: 0x0b91ff,
+    deepBlue: 0x0457d7,
   };
   const PARTICLE_COLORS = [
+    PALETTE.white,
     PALETTE.cyan,
     PALETTE.blue,
-    PALETTE.violet,
-    PALETTE.gold,
-    PALETTE.green,
+    PALETTE.ice,
     PALETTE.cyan,
-    PALETTE.violet,
+    PALETTE.blue,
   ];
 
   function hasWebGL() {
@@ -49,11 +47,11 @@
   function buildCore(THREE) {
     const geometry = new THREE.IcosahedronGeometry(0.78, 1);
     const material = new THREE.MeshStandardMaterial({
-      color: 0x0a1320,
-      emissive: 0x4ea1ff,
-      emissiveIntensity: 0.85,
+      color: 0x07335f,
+      emissive: 0x0b91ff,
+      emissiveIntensity: 0.92,
       metalness: 0.55,
-      roughness: 0.32,
+      roughness: 0.28,
       flatShading: true,
     });
     return new THREE.Mesh(geometry, material);
@@ -62,10 +60,10 @@
   function buildLattice(THREE) {
     const geometry = new THREE.IcosahedronGeometry(0.96, 1);
     const material = new THREE.MeshBasicMaterial({
-      color: 0x7df1ff,
+      color: 0xffffff,
       wireframe: true,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.68,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -75,9 +73,9 @@
   function buildOuterRing(THREE) {
     const geometry = new THREE.TorusGeometry(1.32, 0.012, 6, 96);
     const material = new THREE.MeshBasicMaterial({
-      color: 0x7df1ff,
+      color: 0x91f6ff,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.5,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -90,16 +88,16 @@
     const group = new THREE.Group();
     const arc = new THREE.TorusGeometry(1.42, 0.008, 4, 64, Math.PI * 0.42);
     const mat1 = new THREE.MeshBasicMaterial({
-      color: 0xc66cff,
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.58,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
     const mat2 = new THREE.MeshBasicMaterial({
-      color: 0x72ffbd,
+      color: 0x0b91ff,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.62,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -208,12 +206,12 @@
     camera.lookAt(0, 0, 0);
 
     // Lights for the standard material on the core.
-    const ambient = new THREE.AmbientLight(0x223044, 0.85);
-    const keyLight = new THREE.DirectionalLight(0x7df1ff, 1.35);
+    const ambient = new THREE.AmbientLight(0x1a3658, 0.9);
+    const keyLight = new THREE.DirectionalLight(0xdffbff, 1.55);
     keyLight.position.set(2.5, 2.0, 3.2);
-    const rimLight = new THREE.DirectionalLight(0xc66cff, 0.95);
+    const rimLight = new THREE.DirectionalLight(0x0b91ff, 1.05);
     rimLight.position.set(-2.4, -1.6, -1.8);
-    const fillLight = new THREE.PointLight(0x72ffbd, 0.55, 8);
+    const fillLight = new THREE.PointLight(0x91f6ff, 0.62, 8);
     fillLight.position.set(0, 0, 2.8);
     scene.add(ambient, keyLight, rimLight, fillLight);
 
@@ -297,7 +295,7 @@
       for (let i = 0; i < userData.flashes.length; i++) {
         const f = userData.flashes[i];
         const k = (state.time - f.start) / f.duration;
-        const fade = Math.sin(Math.PI * k); // 0 → 1 → 0 over duration
+        const fade = Math.sin(Math.PI * k);
         peakOpacity = Math.max(peakOpacity, fade);
 
         // Start point at orbit position
@@ -345,15 +343,15 @@
     }
 
     function updateCore(dt) {
-      // Shift the core's emissive color through the palette over time.
+      // Shift the core's emissive color within the cyan/blue brand range.
       const hueT = state.time * 0.18;
       const r = 0.5 + 0.5 * Math.sin(hueT);
-      const g = 0.5 + 0.5 * Math.sin(hueT + 2.1);
-      const b = 0.5 + 0.5 * Math.sin(hueT + 4.2);
+      const g = 0.5 + 0.5 * Math.sin(hueT + 1.2);
+      const b = 0.5 + 0.5 * Math.sin(hueT + 2.4);
       core.material.emissive.setRGB(
-        0.32 + 0.55 * r,
-        0.55 + 0.4 * g,
-        0.78 + 0.22 * b
+        0.08 + 0.22 * r,
+        0.52 + 0.34 * g,
+        0.84 + 0.16 * b
       );
       core.material.emissiveIntensity = 0.7 + 0.35 * state.intensity + 0.12 * Math.sin(state.time * 2.3);
 
@@ -382,7 +380,7 @@
       const easeRate = 2.4;
       state.intensity += (target - state.intensity) * Math.min(1, dt * easeRate);
 
-      // Stage rotation — slow idle, faster when active.
+      // Stage rotation - slow idle, faster when active.
       const rotSpeed = 0.22 + state.intensity * 0.6;
       stage.rotation.y += dt * rotSpeed;
       stage.rotation.x = -0.18 + Math.sin(state.time * 0.3) * 0.08;
@@ -390,7 +388,7 @@
       updateCore(dt);
       updateParticles(dt);
 
-      // Synapse flash spawning — rate scales sharply with intensity.
+      // Signal flash spawning - rate scales sharply with intensity.
       const flashRate = 0.6 + state.intensity * 4.4; // flashes per second
       if (state.time - state.lastFlashAt > 1 / flashRate) {
         spawnFlash();
@@ -410,7 +408,7 @@
         state.running = false;
         // Chromium pauses (does not cancel) the already-queued rAF when the
         // document is hidden. Cancel it so a single restored loop runs on
-        // visibility — never two stacked loops doing identical work.
+        // visibility - never two stacked loops doing identical work.
         if (state.rafId !== null) {
           cancelAnimationFrame(state.rafId);
           state.rafId = null;

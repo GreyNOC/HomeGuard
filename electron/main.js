@@ -399,9 +399,9 @@ function createWindow() {
     height: 900,
     minWidth: 1040,
     minHeight: 720,
-    title: "HomeGuard",
+    title: "GreyNOC HomeGuard",
     frame: false,
-    backgroundColor: "#000000",
+    backgroundColor: "#03101d",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -506,6 +506,16 @@ function fillCircle(rgba, width, centerX, centerY, radius, color) {
   }
 }
 
+function drawLine(rgba, width, x1, y1, x2, y2, color, thickness = 1) {
+  const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    const x = Math.round(x1 + (x2 - x1) * t);
+    const y = Math.round(y1 + (y2 - y1) * t);
+    fillRect(rgba, width, x - Math.floor(thickness / 2), y - Math.floor(thickness / 2), thickness, color);
+  }
+}
+
 function trayIcon(frame = 0, active = false) {
   const key = `${active ? "active" : "idle"}:${frame}`;
   const cached = trayIconCache.get(key);
@@ -514,19 +524,42 @@ function trayIcon(frame = 0, active = false) {
   }
   const width = 32;
   const rgba = Buffer.alloc(width * width * 4);
-  fillRect(rgba, width, 0, 0, width, [5, 7, 10, 255]);
-  fillCircle(rgba, width, 16, 16, 9, active ? [15, 32, 50, 255] : [9, 17, 27, 255]);
-  fillCircle(rgba, width, 16, 16, 7, active ? [8, 17, 29, 255] : [7, 12, 19, 255]);
-  for (let index = 0; index < 10; index += 1) {
-    const angle = ((index * 36 + frame * 22) * Math.PI) / 180;
-    const radius = index % 2 === 0 ? 11 : 9;
-    const x = Math.round(16 + Math.cos(angle) * radius);
-    const y = Math.round(16 + Math.sin(angle) * radius);
-    const alpha = active ? Math.max(78, 255 - index * 18) : 86;
-    const size = active && index < 3 ? 4 : 3;
-    fillRect(rgba, width, x - Math.floor(size / 2), y - Math.floor(size / 2), size, [130, 216, 255, alpha]);
-  }
-  fillRect(rgba, width, 15, 15, 2, active ? [216, 243, 255, 255] : [94, 119, 144, 255]);
+  fillRect(rgba, width, 0, 0, width, [2, 9, 18, 255]);
+  fillCircle(rgba, width, 16, 16, 14, active ? [7, 35, 70, 255] : [4, 22, 42, 255]);
+  fillCircle(rgba, width, 16, 16, 11, active ? [10, 113, 220, 255] : [8, 61, 120, 255]);
+  fillCircle(rgba, width, 16, 16, 8, active ? [42, 193, 255, 245] : [18, 123, 210, 220]);
+  fillCircle(rgba, width, 16, 16, 4, active ? [204, 250, 255, 245] : [115, 221, 255, 210]);
+
+  const rotation = active ? frame * 12 : 0;
+  const nodeSpecs = [
+    [-90, 13],
+    [-42, 12],
+    [0, 13],
+    [42, 12],
+    [90, 13],
+    [138, 12],
+    [180, 13],
+    [222, 12],
+  ];
+  const nodes = nodeSpecs.map(([degrees, radius]) => {
+    const angle = ((degrees + rotation) * Math.PI) / 180;
+    return {
+      x: Math.round(16 + Math.cos(angle) * radius),
+      y: Math.round(16 + Math.sin(angle) * radius),
+    };
+  });
+  const lineColor = active ? [246, 254, 255, 238] : [150, 231, 255, 158];
+  const innerLineColor = active ? [145, 246, 255, 205] : [83, 174, 235, 135];
+  [
+    [0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 0],
+    [0, 2], [2, 4], [4, 6], [6, 0],
+  ].forEach(([a, b], index) => {
+    drawLine(rgba, width, nodes[a].x, nodes[a].y, nodes[b].x, nodes[b].y, index < 8 ? lineColor : innerLineColor, active ? 2 : 1);
+  });
+  nodes.forEach((node, index) => {
+    const size = active && index % 2 === 0 ? 4 : 3;
+    fillCircle(rgba, width, node.x, node.y, Math.max(1, Math.floor(size / 2)), active ? [255, 255, 255, 255] : [194, 246, 255, 210]);
+  });
   const icon = nativeImage.createFromBuffer(rgbaToPng(width, width, rgba));
   icon.setTemplateImage(false);
   trayIconCache.set(key, icon);
@@ -543,7 +576,7 @@ function updateTrayIndicator() {
   }
   const active = isScanIndicatorActive();
   tray.setImage(trayIcon(scanIndicatorFrame, active));
-  tray.setToolTip(active ? "HomeGuard - local scan active" : "HomeGuard");
+  tray.setToolTip(active ? "GreyNOC - Scanning Now" : "GreyNOC HomeGuard");
   if (active && !scanIndicatorTimer) {
     scanIndicatorTimer = setInterval(() => {
       scanIndicatorFrame = (scanIndicatorFrame + 1) % 16;
@@ -589,11 +622,11 @@ function ensureTray() {
     return tray;
   }
   tray = new Tray(trayIcon(0, isScanIndicatorActive()));
-  tray.setToolTip("HomeGuard");
+  tray.setToolTip("GreyNOC HomeGuard");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: "Show HomeGuard",
+        label: "Show GreyNOC",
         click: () => {
           showMainWindow();
         },
@@ -775,14 +808,14 @@ ipcMain.handle("homeguard:log-state", async () => {
   if (fs.existsSync(filePath)) {
     text = scrubText(fs.readFileSync(filePath, "utf8"));
   }
-  return { stdout: text, logLabel: "Local HomeGuard log" };
+  return { stdout: text, logLabel: "Local GreyNOC HomeGuard log" };
 });
 
 ipcMain.handle("homeguard:logs-folder", async () => {
   const logsPath = path.join(appDataDir(), "logs");
   fs.mkdirSync(logsPath, { recursive: true });
   if (!isAllowedReportOrLogPath(logsPath, { allowDirectory: true })) {
-    return { ok: false, message: "The logs folder is outside the HomeGuard report/log area." };
+    return { ok: false, message: "The logs folder is outside the GreyNOC HomeGuard report/log area." };
   }
   const message = await shell.openPath(logsPath);
   return { ok: !message, message: scrubText(message), stdout: "Opened the local logs folder." };
@@ -830,7 +863,7 @@ ipcMain.handle("homeguard:save-html-as", async (event, htmlPath) => {
   }
   const window = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showSaveDialog(window || undefined, {
-    title: "Save HomeGuard HTML Report",
+    title: "Save GreyNOC HTML Report",
     defaultPath: path.basename(sourcePath),
     filters: [{ name: "HTML Report", extensions: ["html"] }],
   });
@@ -871,7 +904,7 @@ ipcMain.handle("homeguard:admin-access", async () => {
 ipcMain.handle("homeguard:open-path", async (_event, targetPath) => {
   const safeTarget = cleanString(targetPath, 1000);
   if (!safeTarget || !isAllowedOpenPath(safeTarget)) {
-    return { ok: false, message: "This path is outside the HomeGuard report/log area or is not a report/log file." };
+    return { ok: false, message: "This path is outside the GreyNOC HomeGuard report/log area or is not a report/log file." };
   }
   const message = await shell.openPath(path.resolve(safeTarget));
   return { ok: !message, message: scrubText(message) };

@@ -153,15 +153,16 @@ if (css.includes("background: white")) {
   throw new Error("Renderer still contains white panel styling.");
 }
 
-if (!css.includes(".scan-orb.is-active") || !css.includes("scan-orb-spin")) {
-  throw new Error("Renderer scan indicator is not wired to active scan state.");
+const indicatorCss = fs.readFileSync(path.join(root, "electron", "renderer", "scan-indicator.css"), "utf8");
+if (!indicatorCss.includes(".scan-orb.is-active") || !indicatorCss.includes("gn-scan-orb-spin") || !indicatorCss.includes(".scan-indicator-label.is-active")) {
+  throw new Error("Renderer scan indicator is not wired to the GreyNOC active scan state.");
 }
 
 const renderer = fs.readFileSync(path.join(root, "electron", "renderer", "renderer.js"), "utf8");
 if (!renderer.includes("activeScan.addEventListener(\"change\", updateScanIndicator)")) {
   throw new Error("Active scan toggle does not drive the scan indicator.");
 }
-if (!renderer.includes("Active scan on") || !renderer.includes("Scanning now")) {
+if (!renderer.includes("Active Scan On") || !renderer.includes("Scanning Now")) {
   throw new Error("Active scan state is not labeled under the scan indicator.");
 }
 if (renderer.includes("devicesTableBody.innerHTML") || renderer.includes("historyTableBody.innerHTML")) {

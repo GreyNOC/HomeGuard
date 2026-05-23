@@ -146,6 +146,31 @@ class BaselineStore:
             row.setdefault("device_type", "unknown")
             row.setdefault("notes", "")
 
+            # Auto-classification: when the user hasn't labeled this device
+            # (device_type still "unknown") AND the resolver populated a
+            # confident guess, adopt it. Once the user labels the device by
+            # hand via ``set_label``, this block leaves it alone — we never
+            # overwrite a human label with an automated guess.
+            metadata = device.metadata if isinstance(device.metadata, dict) else {}
+            current_type = str(row.get("device_type") or "").strip().lower()
+            if current_type in {"", "unknown"} and not row.get("device_type_user_set"):
+                guess = str(metadata.get("resolved_device_type") or "").strip().lower()
+                if guess and guess != "unknown" and guess in DEVICE_TYPES:
+                    row["device_type"] = guess
+                    row["device_type_auto"] = True
+                    try:
+                        row["device_type_confidence"] = float(
+                            metadata.get("resolved_device_type_confidence") or 0.0
+                        )
+                    except (TypeError, ValueError):
+                        row["device_type_confidence"] = 0.0
+
+            # Carry through transparency flags for the GUI / report layer.
+            if metadata.get("hostname_synthesized"):
+                row["hostname_synthesized"] = True
+            if metadata.get("resolved_vendor") and not row.get("vendor_source"):
+                row["vendor_source"] = "extended_oui"
+
     def set_trust(self, fingerprint: str, trust: str) -> bool:
         trust = trust.lower().strip()
         if trust not in TRUST_VALUES:
@@ -176,6 +201,10 @@ class BaselineStore:
         if device_type is not None:
             type_clean = device_type.lower().strip() or "unknown"
             row["device_type"] = type_clean if type_clean in DEVICE_TYPES else "unknown"
+            # Hand-labeling locks the row against future auto-classification.
+            row["device_type_user_set"] = True
+            row.pop("device_type_auto", None)
+            row.pop("device_type_confidence", None)
         if notes is not None:
             row["notes"] = str(notes)[:500]
         row["labels_updated_at"] = utcnow()

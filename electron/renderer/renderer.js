@@ -104,7 +104,7 @@ function setActionDisabled(button, disabled, reason = "") {
 
 function setBusy(isBusy) {
   [scanButton, updateButton, statusButton, historyButton, adminButton, setupButton].forEach((button) => {
-    setActionDisabled(button, isBusy, isBusy ? "HomeGuard is already running an action." : "");
+    setActionDisabled(button, isBusy, isBusy ? "GreyNOC is already running an action." : "");
   });
   if (!isBusy) {
     refreshDisabledActions();
@@ -118,11 +118,13 @@ function isScanIndicatorActive() {
 function updateScanIndicator() {
   const active = isScanIndicatorActive();
   scanOrb.classList.toggle("is-active", active);
-  scanOrb.setAttribute("aria-label", active ? "Local continuous scan is active" : "Local continuous scan is idle");
+  scanOrb.setAttribute("aria-label", active ? "GreyNOC local scan is active" : "GreyNOC local scan is idle");
   if (scanOrb3D) scanOrb3D.setActive(active);
-  scanIndicatorLabel.textContent = scanRunning ? "Scanning now" : activeScan.checked ? "Active scan on" : "Active scan off";
+  scanIndicatorLabel.textContent = scanRunning ? "Scanning Now" : activeScan.checked ? "Active Scan On" : "Active Scan Off";
   scanIndicatorLabel.classList.toggle("is-active", active);
-  window.homeguard.setScanIndicator({ activeRequested: activeScan.checked }).catch(() => {});
+  if (window.homeguard?.setScanIndicator) {
+    window.homeguard.setScanIndicator({ activeRequested: activeScan.checked }).catch(() => {});
+  }
 }
 
 function setScanRunning(isRunning) {
@@ -466,7 +468,7 @@ adminButton.addEventListener("click", async () => {
 trayButton.addEventListener("click", () => window.homeguard.minimizeToTray());
 setupButton.addEventListener("click", () => {
   showOutput([
-    "HomeGuard setup guide",
+    "GreyNOC setup guide",
     "",
     "1. Update Definitions to refresh local CVE and KEV intelligence.",
     "2. Keep Active scan off for the gentlest first scan, or enable it for bounded private-network checks.",
@@ -564,16 +566,20 @@ $("windowMinimize").addEventListener("click", () => window.homeguard.windowActio
 $("windowMaximize").addEventListener("click", () => window.homeguard.windowAction("toggle-maximize"));
 $("windowClose").addEventListener("click", () => window.homeguard.windowAction("close"));
 
-window.homeguard
-  .definitionsStatus()
-  .then((result) => {
-    if (result && result.status) {
-      updateValue.textContent = result.status.update_status || "Ready";
-    }
-  })
-  .catch(() => {
-    updateValue.textContent = "Unknown";
-  });
+if (window.homeguard?.definitionsStatus) {
+  window.homeguard
+    .definitionsStatus()
+    .then((result) => {
+      if (result && result.status) {
+        updateValue.textContent = result.status.update_status || "Ready";
+      }
+    })
+    .catch(() => {
+      updateValue.textContent = "Unknown";
+    });
+} else {
+  updateValue.textContent = "Ready";
+}
 
 refreshDisabledActions();
 updateScanIndicator();

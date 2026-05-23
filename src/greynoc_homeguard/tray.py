@@ -1,4 +1,4 @@
-"""System tray helper for HomeGuard.
+"""System tray helper for GreyNOC HomeGuard.
 
 The tray fails gracefully on platforms without ``pystray`` installed or
 without an available system-tray host. In that case it logs a clear message
@@ -8,6 +8,7 @@ limitation.
 
 from __future__ import annotations
 
+import math
 import sys
 import threading
 import webbrowser
@@ -38,16 +39,31 @@ def _make_icon_image():
         from PIL import Image, ImageDraw  # type: ignore
     except Exception:
         return None
-    img = Image.new("RGBA", (64, 64), (11, 18, 32, 255))
+    img = Image.new("RGBA", (64, 64), (2, 9, 18, 255))
     draw = ImageDraw.Draw(img)
     for y in range(64):
         ratio = y / 63
-        r = int(11 + (37 - 11) * ratio)
-        g = int(18 + (99 - 18) * ratio)
-        b = int(32 + (235 - 32) * ratio)
+        r = int(2 + (4 - 2) * ratio)
+        g = int(9 + (24 - 9) * ratio)
+        b = int(18 + (43 - 18) * ratio)
         draw.line([(0, y), (63, y)], fill=(r, g, b, 255))
-    draw.rectangle([12, 14, 52, 50], outline=(255, 255, 255, 255), width=2)
-    draw.text((22, 22), "GN", fill=(255, 255, 255, 255))
+    draw.ellipse([6, 6, 58, 58], fill=(4, 28, 55, 255), outline=(255, 255, 255, 220), width=2)
+    draw.ellipse([12, 12, 52, 52], fill=(8, 93, 190, 255))
+    draw.ellipse([20, 20, 44, 44], fill=(48, 194, 255, 235))
+    draw.ellipse([27, 27, 37, 37], fill=(218, 251, 255, 235))
+
+    node_specs = [(-90, 25), (-42, 23), (0, 25), (42, 23), (90, 25), (138, 23), (180, 25), (222, 23)]
+    nodes = []
+    for degrees, radius in node_specs:
+        angle = math.radians(degrees)
+        nodes.append((32 + math.cos(angle) * radius, 32 + math.sin(angle) * radius))
+    for start, end in [
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 0),
+        (0, 2), (2, 4), (4, 6), (6, 0),
+    ]:
+        draw.line([nodes[start], nodes[end]], fill=(245, 254, 255, 235), width=3)
+    for x, y in nodes:
+        draw.ellipse([x - 4, y - 4, x + 4, y + 4], fill=(255, 255, 255, 255))
     return img
 
 
@@ -70,7 +86,7 @@ class TrayController:
         on_open_report: TrayCallback,
         on_update_definitions: TrayCallback,
         on_quit: TrayCallback,
-        title: str = "HomeGuard",
+        title: str = "GreyNOC HomeGuard",
     ) -> None:
         self.on_show = on_show
         self.on_scan = on_scan
@@ -108,14 +124,14 @@ class TrayController:
             return False
 
         menu = pystray.Menu(
-            pystray.MenuItem("Show HomeGuard", lambda _icon, _item: self.on_show(), default=True),
+            pystray.MenuItem("Show GreyNOC", lambda _icon, _item: self.on_show(), default=True),
             pystray.MenuItem("Scan now", lambda _icon, _item: self.on_scan()),
             pystray.MenuItem("Open latest report", lambda _icon, _item: self.on_open_report()),
             pystray.MenuItem(
                 "Update definitions",
                 lambda _icon, _item: self.on_update_definitions(),
             ),
-            pystray.MenuItem("Quit HomeGuard", lambda _icon, _item: self.on_quit()),
+            pystray.MenuItem("Quit GreyNOC", lambda _icon, _item: self.on_quit()),
         )
         self.icon = pystray.Icon("GreyNOCHomeGuard", icon_image, self.title, menu)
         self.available = True
@@ -197,18 +213,18 @@ def run_tray() -> int:
 
     def scan_in_background(icon, reason: str) -> None:
         if not scan_lock.acquire(blocking=False):
-            notify(icon, "HomeGuard", "A scan is already running.")
+            notify(icon, "GreyNOC", "A scan is already running.")
             return
         try:
-            notify(icon, "HomeGuard", f"{reason} scan started.")
+            notify(icon, "GreyNOC", f"{reason} scan started.")
             result = run_scheduled_scan()
             if result is None:
-                notify(icon, "HomeGuard", "Background scan failed. Check the logs for details.")
+                notify(icon, "GreyNOC", "Background scan failed. Check the logs for details.")
                 return
             report, _paths, _entry = result
             notify(
                 icon,
-                "HomeGuard",
+                "GreyNOC",
                 f"Scan complete: {len(report.devices)} devices, {len(report.findings)} findings.",
             )
         finally:
@@ -262,7 +278,7 @@ def run_tray() -> int:
         pystray.MenuItem("Exit", on_exit),
     )
 
-    icon = pystray.Icon("GreyNOCHomeGuard", icon_image, "HomeGuard", menu)
+    icon = pystray.Icon("GreyNOCHomeGuard", icon_image, "GreyNOC HomeGuard", menu)
     LOG.info("Starting HomeGuard tray.")
     icon.run(setup=lambda active_icon: threading.Thread(target=monitor_loop, args=(active_icon,), daemon=True).start())
     LOG.info("HomeGuard tray exited.")
