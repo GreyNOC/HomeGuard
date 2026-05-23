@@ -88,7 +88,7 @@ def render_markdown(report: HomeGuardReport) -> str:
     engine_status = _scan_metadata(report, "detection_engine", {}) or {}
 
     lines: list[str] = []
-    lines.append("# HomeGuard Report")
+    lines.append("# GreyNOC HomeGuard Report")
     lines.append("")
     lines.append(f"Report ID: `{report.report_id}`")
     lines.append(f"Created: `{report.created_at}`")
@@ -242,7 +242,7 @@ def render_html(report: HomeGuardReport) -> str:
             </section>
             """
         )
-    findings_html = "".join(finding_cards) if finding_cards else "<p>No findings. Keep HomeGuard updated and scan again later.</p>"
+    findings_html = "".join(finding_cards) if finding_cards else "<p>No findings. Keep GreyNOC updated and scan again later.</p>"
 
     device_rows: list[str] = []
     for device in report.devices:
@@ -273,7 +273,7 @@ def render_html(report: HomeGuardReport) -> str:
             "<h2>Quarantined / Blocked Devices</h2>"
             "<table><thead><tr><th>Name</th><th>IP</th><th>Device ID</th><th>Owner</th><th>Type</th><th>Active in scan</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
-            "<p class=\"meta\">Quarantine flags devices in HomeGuard reports. To actually block traffic, "
+            "<p class=\"meta\">Quarantine flags devices in GreyNOC reports. To actually block traffic, "
             "remove the device from your router or change the WiFi password.</p>"
             "</section>"
         )
@@ -416,72 +416,81 @@ def render_html(report: HomeGuardReport) -> str:
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-{csp_nonce}'; script-src 'nonce-{csp_nonce}'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HomeGuard Report</title>
+<title>GreyNOC HomeGuard Report</title>
 <style nonce="{csp_nonce}">
 :root {{
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #F4F7FB;
-  background: #05070A;
-  --app-bg: #05070A;
-  --surface: #0B0F16;
-  --surface-raised: #101722;
-  --surface-muted: #070B10;
-  --border: #223047;
-  --border-strong: #2E4568;
-  --text: #F4F7FB;
-  --muted: #A8B3C5;
-  --subtle: #7F8CA3;
-  --blue: #0B3D91;
-  --blue-hover: #123A7A;
+  color: #F4FBFF;
+  background: #03101D;
+  --app-bg: #03101D;
+  --surface: #081A2B;
+  --surface-raised: #0D2338;
+  --surface-muted: #061420;
+  --border: #164061;
+  --border-strong: #2A6F99;
+  --text: #F4FBFF;
+  --muted: #A8C8DC;
+  --subtle: #6F93AB;
+  --blue: #0B91FF;
+  --blue-hover: #34C7FF;
+  --cyan: #91F6FF;
 }}
-body {{ margin: 0; background:#05070A; color:#F4F7FB; }}
-header {{ background: #05070A; color: #F4F7FB; padding: 34px 34px 78px; border-bottom:1px solid #223047; }}
+body {{ margin: 0; background:#03101D; color:#F4FBFF; }}
+header {{ background: linear-gradient(180deg, #04182B, #03101D); color: #F4FBFF; padding: 34px 34px 78px; border-bottom:1px solid #164061; }}
 .brand {{ display:flex; align-items:center; gap:14px; margin-bottom:20px; }}
-.brand-mark {{ width:46px; height:46px; border-radius:10px; border:1px solid #2E4568; display:grid; place-items:center; font-weight:900; background:#142947; color:#F4F7FB; }}
-.brand-title {{ letter-spacing:.08em; text-transform:uppercase; font-weight:800; font-size:13px; opacity:.88; }}
-h1 {{ margin: 0 0 10px; font-size: 38px; color: #F4F7FB; }}
-header p {{ max-width: 900px; line-height:1.55; color:#A8B3C5; }}
+.brand-mark {{ position:relative; width:48px; height:48px; border-radius:50%; background:radial-gradient(circle at 50% 46%, #5DDFFF 0 24%, #108EFF 43%, #0457D7 68%, #042348 100%); box-shadow:0 0 0 1px #fff, 0 0 24px rgba(145,246,255,.58); }}
+.brand-mark:before {{ content:""; position:absolute; inset:5px; border-radius:50%; border:3px solid #fff; background:linear-gradient(0deg, transparent 47%, #fff 48% 52%, transparent 53%), linear-gradient(60deg, transparent 47%, #fff 48% 52%, transparent 53%), linear-gradient(-60deg, transparent 47%, #fff 48% 52%, transparent 53%); }}
+.brand-mark span {{ position:absolute; width:7px; height:7px; margin:-3.5px; border-radius:50%; background:#fff; box-shadow:0 0 8px rgba(145,246,255,.9); }}
+.brand-mark span:nth-child(1) {{ left:50%; top:2px; }}
+.brand-mark span:nth-child(2) {{ left:88%; top:28%; }}
+.brand-mark span:nth-child(3) {{ left:88%; top:72%; }}
+.brand-mark span:nth-child(4) {{ left:50%; top:98%; }}
+.brand-mark span:nth-child(5) {{ left:12%; top:72%; }}
+.brand-mark span:nth-child(6) {{ left:12%; top:28%; }}
+.brand-title {{ letter-spacing:.08em; text-transform:uppercase; font-weight:800; font-size:13px; opacity:.92; }}
+h1 {{ margin: 0 0 10px; font-size: 38px; color: #F4FBFF; }}
+header p {{ max-width: 900px; line-height:1.55; color:#A8C8DC; }}
 main {{ max-width: 1120px; margin: -58px auto 0; padding: 24px; }}
 .actions {{ display:flex; flex-wrap:wrap; gap:10px; margin:0 0 18px; }}
-.actions .action {{ border:1px solid #3B82F6; text-decoration:none; cursor:pointer; background:#174EA6; color:#fff; border-radius:6px; padding:10px 14px; font-weight:800; font-size:14px; }}
-.actions .action:hover {{ background:#1D4ED8; border-color:#60A5FA; }}
-.actions .action.secondary {{ background:#111827; color:#fff; border-color:#2E4568; }}
+.actions .action {{ border:1px solid #91F6FF; text-decoration:none; cursor:pointer; background:#0B91FF; color:#02111F; border-radius:6px; padding:10px 14px; font-weight:800; font-size:14px; }}
+.actions .action:hover {{ background:#34C7FF; border-color:#fff; }}
+.actions .action.secondary {{ background:#0D2338; color:#F4FBFF; border-color:#2A6F99; }}
 .summary {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }}
 .secondary-metrics {{ margin-top: 16px; }}
-.metric {{ background: #0B0F16; border-radius: 10px; padding: 20px; box-shadow: 0 18px 42px rgba(0, 0, 0, .34); border:1px solid #223047; }}
-.metric b {{ display: block; font-size: 26px; margin-bottom: 4px; color:#F4F7FB; }}
-.metric small {{ color:#A8B3C5; font-size: 13px; }}
+.metric {{ background: #081A2B; border-radius: 10px; padding: 20px; box-shadow: 0 18px 42px rgba(0, 0, 0, .34); border:1px solid #164061; }}
+.metric b {{ display: block; font-size: 26px; margin-bottom: 4px; color:#F4FBFF; }}
+.metric small {{ color:#A8C8DC; font-size: 13px; }}
 .metric.protected b {{ color:#16A34A; }}
 .metric.review b {{ color:#D97706; }}
 .metric.action b {{ color:#DC2626; }}
-.panel, .finding-card {{ background: #0B0F16; border-radius: 10px; padding: 20px; box-shadow: 0 18px 42px rgba(0, 0, 0, .34); margin: 16px 0; border:1px solid #223047; }}
+.panel, .finding-card {{ background: #081A2B; border-radius: 10px; padding: 20px; box-shadow: 0 18px 42px rgba(0, 0, 0, .34); margin: 16px 0; border:1px solid #164061; }}
 .finding-card {{ border-left: 7px solid #64748b; }}
 .card-head {{ display: flex; gap: 16px; align-items: start; justify-content: space-between; }}
-.card-head h3 {{ margin: 0; color:#F4F7FB; }}
-.card-head span {{ background: #142947; border:1px solid #2E4568; color:#F4F7FB; border-radius: 8px; padding: 7px 11px; font-weight: 800; white-space: nowrap; }}
+.card-head h3 {{ margin: 0; color:#F4FBFF; }}
+.card-head span {{ background: #0D2338; border:1px solid #2A6F99; color:#F4FBFF; border-radius: 8px; padding: 7px 11px; font-weight: 800; white-space: nowrap; }}
 .severity-critical, .severity-high {{ border-left-color: #dc2626; }}
 .severity-medium {{ border-left-color: #d97706; }}
 .severity-low {{ border-left-color: #0b3d91; }}
 .severity-info {{ border-left-color: #64748b; }}
-.meta, p, li, td {{ color: #A8B3C5; }}
+.meta, p, li, td {{ color: #A8C8DC; }}
 .meta {{ font-size: 14px; }}
-table {{ width: 100%; border-collapse: collapse; background: #0B0F16; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 42px rgba(0, 0, 0, .34); border:1px solid #223047; }}
-th, td {{ text-align: left; padding: 13px; border-bottom: 1px solid #223047; vertical-align:top; }}
-th {{ background: #101722; color:#F4F7FB; }}
-td {{ color:#A8B3C5; }}
+table {{ width: 100%; border-collapse: collapse; background: #081A2B; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 42px rgba(0, 0, 0, .34); border:1px solid #164061; }}
+th, td {{ text-align: left; padding: 13px; border-bottom: 1px solid #164061; vertical-align:top; }}
+th {{ background: #0D2338; color:#F4FBFF; }}
+td {{ color:#A8C8DC; }}
 .search {{ margin: 20px 0; }}
-.search input {{ width: 100%; border: 1px solid #223047; border-radius: 8px; padding: 13px 15px; font-size: 16px; box-sizing:border-box; background:#070B10; color:#F4F7FB; }}
+.search input {{ width: 100%; border: 1px solid #164061; border-radius: 8px; padding: 13px 15px; font-size: 16px; box-sizing:border-box; background:#061420; color:#F4FBFF; }}
 .family-grid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:14px; }}
-.family-grid h4, h2 {{ margin: 0 0 6px; color:#F4F7FB; }}
-footer {{ color: #7F8CA3; padding: 24px; text-align: center; }}
-details summary {{ color:#F4F7FB; }}
-details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; background:#070B10; color:#D8E6FF; padding:18px; border:1px solid #223047; border-radius:8px; }}
+.family-grid h4, h2 {{ margin: 0 0 6px; color:#F4FBFF; }}
+footer {{ color: #6F93AB; padding: 24px; text-align: center; }}
+details summary {{ color:#F4FBFF; }}
+details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; background:#061420; color:#D8F3FF; padding:18px; border:1px solid #164061; border-radius:8px; }}
 @media print {{ .actions, .search {{ display:none; }} main {{ margin:0; }} header {{ padding-bottom:34px; }} }}
 </style>
 </head>
 <body>
 <header>
-  <div class="brand"><div class="brand-mark">GN</div><div><div class="brand-title">HomeGuard</div><div>Home Network Risk Review Report</div></div></div>
+  <div class="brand"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div><div><div class="brand-title">GreyNOC</div><div>HomeGuard Risk Review Report</div></div></div>
   <h1>Home Security Report</h1>
   <p>{html.escape(report.summary)}</p>
 </header>
@@ -542,7 +551,7 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
 
   <details><summary>Raw report JSON</summary><pre>{json_payload}</pre></details>
 </main>
-<footer>Report {html.escape(report.report_id)} generated {html.escape(report.created_at)}. HomeGuard findings are indicators, not proof of compromise.</footer>
+<footer>Report {html.escape(report.report_id)} generated {html.escape(report.created_at)}. GreyNOC findings are indicators, not proof of compromise.</footer>
 <script nonce="{csp_nonce}">
 function filterCards() {{
   const term = document.getElementById('filter').value.toLowerCase();
@@ -556,7 +565,7 @@ function downloadHtmlReport() {{
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'HomeGuard-{html.escape(report.report_id)}.html';
+  a.download = 'GreyNOC-{html.escape(report.report_id)}.html';
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -716,7 +725,7 @@ def _header_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
     canvas.rect(0, height - 0.42 * inch, width, 0.42 * inch, fill=1, stroke=0)
     canvas.setFillColor(colors.white)
     canvas.setFont("Helvetica-Bold", 9)
-    canvas.drawString(0.55 * inch, height - 0.26 * inch, "HomeGuard")
+    canvas.drawString(0.55 * inch, height - 0.26 * inch, "GreyNOC")
     canvas.setFont("Helvetica", 7)
     canvas.drawRightString(width - 0.55 * inch, 0.34 * inch, f"Page {doc.page}")
     canvas.setFillColor(colors.HexColor("#64748B"))
@@ -750,7 +759,7 @@ def write_pdf(path: Path, report: HomeGuardReport) -> None:
         leftMargin=0.55 * inch,
         topMargin=0.65 * inch,
         bottomMargin=0.62 * inch,
-        title="HomeGuard Report",
+        title="GreyNOC HomeGuard Report",
         author="GreyNOC",
         subject="Home network protection report",
     )
@@ -761,7 +770,7 @@ def write_pdf(path: Path, report: HomeGuardReport) -> None:
         [
             [
                 [
-                    Paragraph("HOMEGUARD", styles["brand"]),
+                    Paragraph("GREYNOC", styles["brand"]),
                     Paragraph("Home Security Report", styles["title"]),
                     Paragraph(html.escape(report.summary), styles["subtitle"]),
                 ]

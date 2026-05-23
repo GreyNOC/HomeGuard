@@ -7,58 +7,62 @@
       content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src file:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>HomeGuard</title>
+    <title>GreyNOC HomeGuard</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="scan-indicator.css" />
   </head>
   <body>
     <div class="titlebar">
-      <div class="titlebar-brand" aria-label="HomeGuard">
-        <span class="brand-mark">GN</span>
-        <span>HomeGuard</span>
+      <div class="titlebar-brand" aria-label="GreyNOC HomeGuard">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+        </span>
+        <span>GreyNOC</span>
       </div>
       <div class="window-controls" aria-label="Window controls">
-        <button id="windowMinimize" type="button" aria-label="Minimize">-</button>
-        <button id="windowMaximize" type="button" aria-label="Maximize">[]</button>
-        <button id="windowClose" type="button" aria-label="Close">x</button>
+        <button id="windowMinimize" type="button" aria-label="Minimize"><span class="control-icon control-minimize" aria-hidden="true"></span></button>
+        <button id="windowMaximize" type="button" aria-label="Maximize"><span class="control-icon control-maximize" aria-hidden="true"></span></button>
+        <button id="windowClose" type="button" aria-label="Close"><span class="control-icon control-close" aria-hidden="true"></span></button>
       </div>
     </div>
 
     <div class="app-shell">
-      <aside class="sidebar" aria-label="HomeGuard navigation">
+      <aside class="sidebar" aria-label="GreyNOC navigation">
         <div class="sidebar-header">
-          <span class="brand-mark large">GN</span>
+          <span class="brand-mark large" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </span>
           <div>
-            <h1>HomeGuard</h1>
-            <p>Security assistant</p>
+            <h1>GreyNOC</h1>
+            <p>HomeGuard Security</p>
           </div>
         </div>
 
-        <button id="newChatButton" class="new-chat" type="button">+ New Chat</button>
+        <button id="newChatButton" class="new-chat icon-plus" type="button"><span>New Chat</span></button>
 
-        <nav class="tabs" aria-label="HomeGuard sections">
-          <button class="tab active" id="protectionTab" type="button">Ask HomeGuard</button>
-          <button class="tab" id="devicesTab" type="button">Devices</button>
-          <button class="tab" id="historyTab" type="button">Scan History</button>
-          <button class="tab" id="scheduleTab" type="button">Schedule</button>
-          <button class="tab" id="logsTab" type="button">Logs</button>
+        <nav class="tabs" aria-label="GreyNOC sections">
+          <button class="tab active icon-chat" id="protectionTab" type="button"><span>Ask GreyNOC</span></button>
+          <button class="tab icon-devices" id="devicesTab" type="button"><span>Devices</span></button>
+          <button class="tab icon-history" id="historyTab" type="button"><span>Scan History</span></button>
+          <button class="tab icon-schedule" id="scheduleTab" type="button"><span>Schedule</span></button>
+          <button class="tab icon-logs" id="logsTab" type="button"><span>Logs</span></button>
         </nav>
 
         <div class="sidebar-footer">
-          <p id="statusText">Ready. Ask a security question or run a local scan.</p>
+          <p id="statusText">Ready. Ask GreyNOC or run a local scan.</p>
         </div>
       </aside>
 
       <main class="workspace">
         <section id="protectionPage" class="page active-page chat-page">
-          <section class="chat-column" aria-label="HomeGuard chat">
+          <section class="chat-column" aria-label="GreyNOC chat">
             <div id="chatMessages" class="chat-messages" aria-live="polite">
               <article class="message assistant-message">
-                <div class="avatar">HG</div>
+                <div class="avatar assistant-avatar" aria-hidden="true"></div>
                 <div class="message-card">
-                  <p class="eyebrow">HomeGuard Assistant</p>
+                  <p class="eyebrow">GreyNOC Assistant</p>
                   <h2>What do you want to check?</h2>
-                  <p>Ask me about your home network, devices, scan results, or what to fix first. I can also run local HomeGuard actions from this chat.</p>
+                  <p>Ask me about your home network, devices, scan results, or what to fix first. I can also run local GreyNOC actions from this chat.</p>
                   <div class="prompt-grid" aria-label="Starter prompts">
                     <button class="prompt-chip" type="button" data-prompt="Run a local network scan">Run a local network scan</button>
                     <button class="prompt-chip" type="button" data-prompt="Explain my latest report">Explain my latest report</button>
@@ -70,8 +74,8 @@
             </div>
 
             <form id="chatForm" class="chat-composer" autocomplete="off">
-              <textarea id="chatInput" rows="1" placeholder="Ask HomeGuard a security question..." aria-label="Ask HomeGuard a security question"></textarea>
-              <button id="chatSendButton" type="submit" aria-label="Send message">Send</button>
+              <textarea id="chatInput" rows="1" placeholder="Ask GreyNOC a security question..." aria-label="Ask GreyNOC a security question"></textarea>
+              <button id="chatSendButton" class="icon-send" type="submit" aria-label="Send message"><span>Send</span></button>
             </form>
           </section>
 
@@ -88,7 +92,7 @@
                   <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
                   <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
                 </div>
-                <span id="scanIndicatorLabel" class="scan-indicator-label">Active scan off</span>
+                <span id="scanIndicatorLabel" class="scan-indicator-label">Active Scan Off</span>
               </div>
             </section>
 
@@ -109,23 +113,23 @@
               <h2>Quick Actions</h2>
               <label class="toggle"><input id="activeScan" type="checkbox" /> <span>Active scan</span></label>
               <label class="toggle"><input id="probeAll" type="checkbox" /> <span>Probe all bounded hosts</span></label>
-              <button id="scanButton" class="action scan" type="button">Run Scan</button>
-              <button id="updateButton" class="action accent" type="button">Update Definitions</button>
-              <button id="statusButton" class="action secondary" type="button">Definition Status</button>
-              <button id="historyButton" class="action secondary" type="button">History</button>
-              <button id="adminButton" class="action secondary" type="button">Admin Access</button>
-              <button id="trayButton" class="action secondary" type="button">Minimize to Tray</button>
-              <button id="setupButton" class="action secondary" type="button">Setup Guide</button>
+              <button id="scanButton" class="action scan icon-scan" type="button">Run Scan</button>
+              <button id="updateButton" class="action accent icon-update" type="button">Update Definitions</button>
+              <button id="statusButton" class="action secondary icon-status" type="button">Definition Status</button>
+              <button id="historyButton" class="action secondary icon-history" type="button">History</button>
+              <button id="adminButton" class="action secondary icon-admin" type="button">Admin Access</button>
+              <button id="trayButton" class="action secondary icon-tray" type="button">Minimize to Tray</button>
+              <button id="setupButton" class="action secondary icon-setup" type="button">Setup Guide</button>
             </section>
 
             <section class="panel report-actions">
               <h2>Latest Report</h2>
               <p id="reportMeta" class="meta">Run a scan to generate a report preview.</p>
               <div class="button-row">
-                <button id="openHtmlButton" class="action secondary" type="button" disabled>Open Report</button>
-                <button id="openPdfButton" class="action secondary" type="button" disabled>Open PDF</button>
-                <button id="saveHtmlButton" class="action secondary" type="button" disabled>Save HTML As...</button>
-                <button id="openFolderButton" class="action secondary" type="button" disabled>Open Folder</button>
+                <button id="openHtmlButton" class="action secondary icon-open" type="button" disabled>Open Report</button>
+                <button id="openPdfButton" class="action secondary icon-pdf" type="button" disabled>Open PDF</button>
+                <button id="saveHtmlButton" class="action secondary icon-save" type="button" disabled>Save HTML As...</button>
+                <button id="openFolderButton" class="action secondary icon-folder" type="button" disabled>Open Folder</button>
               </div>
             </section>
           </aside>
@@ -134,7 +138,7 @@
             <h2>Activity</h2>
             <pre id="output">No command output yet.</pre>
           </section>
-          <iframe id="reportFrame" title="HomeGuard report preview"></iframe>
+          <iframe id="reportFrame" title="GreyNOC report preview"></iframe>
         </section>
 
         <section id="devicesPage" class="page">
@@ -144,12 +148,12 @@
               <p class="meta">Known devices, trust state, labels, and open ports from local scans.</p>
             </div>
             <div class="toolbar page-toolbar">
-              <button id="devicesRefresh" class="action secondary">Refresh</button>
-              <button id="deviceTrusted" class="action accent">Mark Trusted</button>
-              <button id="deviceUnknown" class="action secondary">Mark Unknown</button>
-              <button id="deviceQuarantine" class="action danger">Quarantine</button>
-              <button id="deviceEditLabel" class="action secondary">Edit Family Label</button>
-              <button id="deviceRemove" class="action secondary">Remove from Known Devices</button>
+              <button id="devicesRefresh" class="action secondary icon-refresh">Refresh</button>
+              <button id="deviceTrusted" class="action accent icon-trusted">Mark Trusted</button>
+              <button id="deviceUnknown" class="action secondary icon-unknown">Mark Unknown</button>
+              <button id="deviceQuarantine" class="action danger icon-quarantine">Quarantine</button>
+              <button id="deviceEditLabel" class="action secondary icon-edit">Edit Family Label</button>
+              <button id="deviceRemove" class="action secondary icon-remove">Remove from Known Devices</button>
             </div>
             <div class="table-wrap">
               <table class="data-table" id="devicesTable">
@@ -165,12 +169,12 @@
           <section class="panel page-panel">
             <div class="section-heading"><h2>Scan History</h2><p class="meta">Open past reports and manage retention.</p></div>
             <div class="toolbar page-toolbar">
-              <button id="historyRefresh" class="action secondary">Refresh</button>
-              <button id="historyOpenHtml" class="action secondary">Open HTML</button>
-              <button id="historyOpenPdf" class="action secondary">Open PDF</button>
-              <button id="historyOpenFolder" class="action secondary">Open Folder</button>
+              <button id="historyRefresh" class="action secondary icon-refresh">Refresh</button>
+              <button id="historyOpenHtml" class="action secondary icon-open">Open HTML</button>
+              <button id="historyOpenPdf" class="action secondary icon-pdf">Open PDF</button>
+              <button id="historyOpenFolder" class="action secondary icon-folder">Open Folder</button>
               <label class="inline-field">Retention: <input id="historyRetention" type="number" min="1" value="30" /></label>
-              <button id="historyApply" class="action secondary">Apply</button>
+              <button id="historyApply" class="action secondary icon-apply">Apply</button>
             </div>
             <div class="table-wrap">
               <table class="data-table" id="historyTable">
@@ -197,8 +201,8 @@
                 <label class="toggle"><input name="scheduleInterval" type="radio" value="weekly" /> <span>Weekly</span></label>
               </div>
               <div class="toolbar page-toolbar">
-                <button id="scheduleSave" class="action accent">Save schedule</button>
-                <button id="scheduleRunNow" class="action secondary">Run now</button>
+                <button id="scheduleSave" class="action accent icon-save">Save schedule</button>
+                <button id="scheduleRunNow" class="action secondary icon-scan">Run now</button>
               </div>
               <p id="scheduleStatus" class="meta">Scheduled scans are disabled.</p>
             </div>
@@ -207,10 +211,10 @@
 
         <section id="logsPage" class="page">
           <section class="panel page-panel">
-            <div class="section-heading"><h2>Logs</h2><p class="meta">Local HomeGuard logs.</p></div>
+            <div class="section-heading"><h2>Logs</h2><p class="meta">Local GreyNOC HomeGuard logs.</p></div>
             <div class="toolbar page-toolbar">
-              <button id="logsReload" class="action secondary">Reload</button>
-              <button id="logsOpenFolder" class="action secondary">Open Logs Folder</button>
+              <button id="logsReload" class="action secondary icon-refresh">Reload</button>
+              <button id="logsOpenFolder" class="action secondary icon-folder">Open Logs Folder</button>
             </div>
             <pre id="logsOutput" class="log-view">No log file yet.</pre>
           </section>

@@ -42,17 +42,17 @@
 
     const avatar = document.createElement("div");
     avatar.className = "avatar scan-progress-avatar";
-    avatar.textContent = "HG";
+    avatar.setAttribute("aria-hidden", "true");
 
     const card = document.createElement("div");
     card.className = "message-card scan-progress-card";
 
     const eyebrow = document.createElement("p");
     eyebrow.className = "eyebrow";
-    eyebrow.textContent = "Live scan progress";
+    eyebrow.textContent = "Scanning Now";
 
     const title = document.createElement("h2");
-    title.textContent = "HomeGuard is scanning";
+    title.textContent = "GreyNOC is scanning";
 
     const summary = document.createElement("p");
     summary.className = "scan-progress-summary";
@@ -117,7 +117,7 @@
     const elapsed = elapsedLabel(scanState.startedAt);
     const activeMode = scanState.active ? "active bounded probing" : "passive local discovery";
     const probeMode = scanState.probeAll ? "all bounded hosts" : "standard host set";
-    scanState.nodes.title.textContent = failed ? "HomeGuard scan stopped" : done ? "HomeGuard scan complete" : "HomeGuard is scanning";
+    scanState.nodes.title.textContent = failed ? "GreyNOC scan stopped" : done ? "GreyNOC scan complete" : "GreyNOC is scanning";
     scanState.nodes.summary.textContent = failed
       ? `Stopped after ${elapsed}. Last stage: ${scanState.phase}. The latest error is shown below.`
       : done
@@ -153,7 +153,7 @@
       return;
     }
     const quietFor = Math.floor((Date.now() - scanState.lastUpdateAt) / 1000);
-    const last = scanState.lastMessage || "HomeGuard scan is still running.";
+    const last = scanState.lastMessage || "GreyNOC scan is still running.";
     appendScanLine(`${scanState.phase}. Still running; last scanner update was ${quietFor}s ago. Last update: ${last}`, {
       heartbeat: true,
     });

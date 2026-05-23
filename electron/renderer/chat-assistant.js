@@ -19,8 +19,11 @@
     article.className = `message ${role === "user" ? "user-message" : "assistant-message"}`;
 
     const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.textContent = role === "user" ? "You" : "HG";
+    avatar.className = role === "user" ? "avatar user-avatar" : "avatar assistant-avatar";
+    avatar.textContent = role === "user" ? "You" : "";
+    if (role !== "user") {
+      avatar.setAttribute("aria-hidden", "true");
+    }
 
     const card = document.createElement("div");
     card.className = "message-card";
@@ -159,7 +162,7 @@
     if (!source.length) {
       return [
         "I checked the latest report and did not find PowerSploit resistance or Windows privilege-escalation findings.",
-        "If this report was created without the endpoint scan, run a scan first so HomeGuard can review local Windows hardening signals.",
+        "If this report was created without the endpoint scan, run a scan first so GreyNOC can review local Windows hardening signals.",
       ].join("\n");
     }
 
@@ -206,7 +209,7 @@
     const severity = String(finding.severity || "info").toUpperCase();
     const device = finding.device_name || finding.device_ip || "unknown device";
     const score = Number(finding.risk_score || 0).toFixed(1);
-    return `${index}. ${title} — ${severity}, score ${score}, device: ${device}.`;
+    return `${index}. ${title} - ${severity}, score ${score}, device: ${device}.`;
   }
 
   function findingActions(finding) {
@@ -222,7 +225,7 @@
   }
 
   function noReportMessage(message) {
-    return `${message || "No HomeGuard report is available yet."}\n\nRun a scan first, then ask me what to fix first, explain my latest report, or show risky devices.`;
+    return `${message || "No GreyNOC report is available yet."}\n\nRun a scan first, then ask me what to fix first, explain my latest report, or show risky devices.`;
   }
 
   async function answerLatestReport() {
@@ -235,7 +238,7 @@
     const top = findings.slice(0, 3).map(formatFinding).join("\n");
     const nextSteps = Array.isArray(report.next_steps) ? report.next_steps.slice(0, 3) : [];
     return [
-      `Latest HomeGuard report: ${report.overall_risk || "unknown"} risk, score ${Number(report.overall_score || 0).toFixed(1)}.`,
+      `Latest GreyNOC report: ${report.overall_risk || "unknown"} risk, score ${Number(report.overall_score || 0).toFixed(1)}.`,
       `Devices seen: ${report.device_count || 0}. Findings: ${report.finding_count || findings.length}.`,
       report.summary ? `Summary: ${report.summary}` : "",
       findings.length ? `Top findings:\n${top}` : "No findings were reported in the latest scan.",
@@ -271,7 +274,7 @@
     }
     const findings = sortedFindings(payload.report || {});
     if (!findings.length) {
-      return "I do not see risky devices in the latest report. Run an active scan if you want HomeGuard to check bounded private-network services more deeply.";
+      return "I do not see risky devices in the latest report. Run an active scan if you want GreyNOC to check bounded private-network services more deeply.";
     }
     const byDevice = new Map();
     for (const finding of findings) {
@@ -332,7 +335,7 @@
 
     if (isScanCommand(normalized)) {
       const activeScan = document.getElementById("activeScan");
-      addMessage("assistant", `Starting a HomeGuard scan now. ${activeScan?.checked ? "Active checks are enabled, so HomeGuard will use bounded private-network probing." : "Active checks are off, so this will use the gentler scan mode."}`);
+      addMessage("assistant", `Starting a GreyNOC scan now. ${activeScan?.checked ? "Active checks are enabled, so GreyNOC will use bounded private-network probing." : "Active checks are off, so this will use the gentler scan mode."}`);
       clickAction("scanButton");
       return;
     }
@@ -355,7 +358,7 @@
       return;
     }
 
-    const thinking = addMessage("assistant", "Checking the latest HomeGuard report...");
+    const thinking = addMessage("assistant", "Checking the latest GreyNOC report...");
     try {
       let answer;
       if (isResistancePrompt(normalized)) {
