@@ -919,6 +919,14 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+  /* The orb has a soft drop-shadow halo that extends ~10-18 px past its
+     box, and the parent card carries overflow:hidden (set in
+     scan-indicator.css for the diagonal decoration). Without extra right
+     padding the right edge of the orb gets clipped flat in narrow
+     window-mode widths (visible as a chopped circle in the status card).
+     The extra room here lets the halo render without changing the orb's
+     own geometry. */
+  padding-right: 24px;
 }
 
 .metric-copy { min-width: 0; }

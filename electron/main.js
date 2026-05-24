@@ -416,6 +416,11 @@ function createWindow() {
     event.preventDefault();
   });
   window.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // Open maximized so the entire dashboard - sidebar, chat column, and
+  // right-side status cards - is visible without resizing. The default
+  // 1320x900 stays as the *unmaximized* size, so toggling restore still
+  // produces a usable window.
+  window.maximize();
   ensureTray();
   window.on("minimize", (event) => {
     if (!isQuitting) {
