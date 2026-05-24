@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.5.0 - Identity, Playbooks, and Conversational UI Release
+
+### Device identity resolution
+- New `identity_resolution` module unifies hostname / vendor / device-type resolution with explicit source tracking (DHCP, mDNS, NetBIOS, reverse-DNS, SSDP, synthesized). Each device row now carries `friendly_name`, `hostname_source`, `device_type_source`, `vendor_source`, `device_type_confidence`, and a `resolution_evidence` blob.
+- NetBIOS lookups now run during *passive* scans too (for already-discovered devices), and reverse-DNS + NetBIOS run in a 16-worker thread pool with bounded timeouts so a dead resolver cannot stall the scan.
+- mDNS / SSDP service signatures (`_ipp._tcp`, `_googlecast._tcp`, `_airplay._tcp`, `_hap._tcp`, `_matter._tcp`, `_rtsp._tcp` / ONVIF, SSDP `InternetGatewayDevice`, console-specific tokens, etc.) now drive classification alongside ports and vendor.
+- MAC-less devices get a `metadata.friendly_name` for the GUI without their fingerprint key shifting between scans; MAC-bearing devices safely get a synthesized `device.hostname`.
+- Extended OUI table covers ~180 common consumer device prefixes; the bridge layer prefers the discovery engine's vendor + type over the local fallbacks.
+- Baseline persists every resolution field; user-set `device_type` is never overwritten by the auto-classifier.
+
+### Fix-guidance playbooks per finding
+- Each finding now gets a "Show me how to fix this" panel with step-by-step remediation and concrete action buttons.
+- Five playbook categories: exposed remote service (Telnet/RDP/SMB/VNC), unknown device, quarantined device, KEV/CVE hint, endpoint hardening (Windows privesc / hardening / endpoint-abuse signatures).
+- Action buttons: open vendor / CVE update page (deep links to NVD for the matched CVE), mark patched, mark trusted / quarantined / unknown, run Windows Defender full scan (`MpCmdRun.exe -Scan -ScanType 2`), open Windows Firewall / Defender settings via `ms-settings:` / `windowsdefender:` URIs.
+- Playbook content lives in `playbooks.py` (Python) so the same guidance flows through reports and the AI bridge; actions live in Electron main.js because they touch the OS and the local stores.
+- New "Findings" sidebar tab lists every finding from the latest scan with severity badge + device + rule_id; the playbook drawer slides in from the right and supports Esc / × to close. Marked-patched rows are visually de-emphasized.
+- Defender scan now races the child's `spawn` event vs `error` event with a 2 s backstop and only returns `ok:true` once the process has actually started, so ENOENT / missing Defender no longer reports a false-positive success.
+- Playbook drawer renders are gated by a monotonic request token so a slow response for an earlier click cannot overwrite the drawer with stale guidance.
+
+### Conversational interface
+- Chat history sidebar with a JSON-backed local store (`chats.json`). New Chat creates a fresh thread; previous threads survive reloads, with rename and delete actions surfaced on hover.
+- Race-safe debounced saves (350 ms) serialize concurrent writes so two clicks cannot lose a message.
+- Live scan-progress messages keep going through `scan-progress-chat.js`'s direct DOM path - they do NOT call `addMessage`, so transient scan noise never lands in saved chat history.
+
+### Renderer
+- Warm-dark Claude-style palette replaces the deep-navy theme. Surgical retint: every CSS-drawn icon retints via `currentColor`, no icon CSS touched.
+- Right-panel cutoff fix in windowed mode (`.chat-page` grid row sized with `minmax(0, 1fr)`, `.right-panel` gets `min-height: 0`) so the panel scrolls internally instead of pushing cards out of view.
+- App now launches maximized; the scan orb in the Network Risk card no longer clips at the right edge in narrow window widths.
+- Devices table "Name" column falls back to `friendly_name` (prefixed with `~` to mark estimated names); "Type" column shows the auto-classified type with confidence + source, e.g. `tv (0.62 from mdns_service)`.
+
+### AI bridge
+- Opt-in user AI bridge with a sterile-mode prompt builder that scrubs PII before sending. Off by default.
+
+### Security hardening
+- Release workflow hardened against `${{ ... }}` script-injection vectors; the `security_release_gate.py` allowlist understands GitHub Actions context references.
+- Endpoint memory scan excludes HomeGuard's own process.
+- Endpoint download-scan exclusion narrowed to HomeGuard's own files (not the entire parent directory).
+
 ## 1.2.0 - Active Discovery Release
 
 - Promoted the vendored saturn `_noc_core` multi-vector discovery engine to the default scan path. `run_full_scan` now discovers hosts through the engine — ARP, neighbor cache, mDNS/SSDP, and router DHCP, plus ICMP/TCP/ARP probes when Active scan is enabled — for both passive and active scans. This supersedes the conservative `discover_lan_hosts()` path that 1.1.0 deliberately kept as the default.
