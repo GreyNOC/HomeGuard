@@ -245,14 +245,44 @@ function renderDevices(rows) {
     const tableRow = document.createElement("tr");
     tableRow.dataset.fingerprint = String(row.fingerprint || "");
     tableRow.classList.add(`trust-${String(trust).replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "unknown"}`);
+    // Display-name precedence mirrors identity_resolution.display_name_for():
+    //   real hostname  >  friendly_name (synthesized or MAC-less fallback)  >  vendor  >  "-".
+    // We mark synthesized / friendly-only names with a "~" prefix in the
+    // table so the user can tell at a glance which devices have a real DNS
+    // name vs an estimate.
+    const realHostname = !row.hostname_synthesized ? (row.hostname || "") : "";
+    const friendly = row.friendly_name || "";
+    let displayName;
+    if (realHostname) {
+      displayName = realHostname;
+    } else if (friendly) {
+      displayName = `~${friendly}`;
+    } else if (row.hostname) {
+      // Synthesized hostname with no separate friendly_name field set.
+      displayName = `~${row.hostname}`;
+    } else if (row.vendor) {
+      displayName = `~${row.vendor}`;
+    } else {
+      displayName = "-";
+    }
+    // device_type cell shows the type plus its confidence + source when the
+    // resolver auto-classified it, so the user can tell apart "iot (0.62
+    // from mdns_service)" from a hand-set label.
+    const baseType = row.device_type || "unknown";
+    let typeCell = baseType;
+    if (row.device_type_auto && row.device_type_confidence) {
+      const conf = Number(row.device_type_confidence || 0).toFixed(2);
+      const source = row.device_type_source ? ` from ${row.device_type_source}` : "";
+      typeCell = `${baseType} (${conf}${source})`;
+    }
     [
       row.ip || "-",
-      row.hostname || row.vendor || "-",
+      displayName,
       row.mac_address || "-",
       row.vendor || "-",
       trust,
       row.owner || "unknown",
-      row.device_type || "unknown",
+      typeCell,
       ports,
       row.last_seen || "-",
     ].forEach((value) => appendCell(tableRow, value));

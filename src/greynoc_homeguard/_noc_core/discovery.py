@@ -374,6 +374,20 @@ class DiscoveryOptions:
     multicast_timeout_seconds: float = 2.2
     reverse_dns_budget: int = 8
     reverse_dns_timeout: float = 0.08
+    # Hostname-enrichment knobs. Reverse-DNS and NetBIOS used to run
+    # sequentially, with NetBIOS gated to active scans only - on a home LAN
+    # of 15-30 devices that meant most rows came back blank. These knobs
+    # bound the parallel enrichment phase so it stays cheap and predictable:
+    #   * ``hostname_lookup_budget`` caps the total number of devices that
+    #     get reverse-DNS + NetBIOS enrichment (whichever fires first
+    #     succeeds).
+    #   * ``hostname_lookup_workers`` is the thread-pool size for the
+    #     parallel lookups.
+    #   * ``netbios_lookup_timeout`` is the per-lookup timeout for
+    #     ``nbtstat`` / ``nmblookup``.
+    hostname_lookup_budget: int = 64
+    hostname_lookup_workers: int = 16
+    netbios_lookup_timeout: float = 1.5
     cancel_event: threading.Event | None = None
     safe_ports: tuple[int, ...] = field(default_factory=lambda: SAFE_INVENTORY_PORTS)
 
@@ -529,8 +543,13 @@ def discover_local_network(
     if not options.passive_only and targets and not _is_cancelled(options):
         scanned_hosts = _collect_active_sources(targets, arp_hosts, accumulator, options, warnings)
 
+    # Identity enrichment runs regardless of passive_only: we are not
+    # discovering NEW hosts here, just naming the ones we already saw on
+    # the private LAN. ``_fill_reverse_dns`` and ``_fill_netbios_names``
+    # iterate the accumulator (devices already observed) and bound their
+    # cost via the hostname_lookup_budget / per-lookup timeouts.
     _fill_reverse_dns(accumulator, options)
-    if not options.passive_only and not _is_cancelled(options):
+    if not _is_cancelled(options):
         _fill_netbios_names(accumulator, options)
     devices = _with_inferred_peripherals(accumulator.devices(), generated_at)
     links = _build_inventory_links(devices)
@@ -1263,21 +1282,51 @@ def _probe_tcp_host(ip: str, options: DiscoveryOptions, limiter: _RateLimiter) -
 
 
 def _fill_reverse_dns(accumulator: _DeviceAccumulator, options: DiscoveryOptions) -> None:
-    budget = max(0, int(options.reverse_dns_budget))
+    """Parallel reverse-DNS enrichment for already-observed devices.
+
+    Bounded by ``hostname_lookup_budget`` (or ``reverse_dns_budget`` if the
+    caller didn't set the newer knob) and ``hostname_lookup_workers``. Each
+    lookup has its own ``reverse_dns_timeout``, so a single dead resolver
+    cannot stall the scan -- the worker pool keeps draining around it.
+    """
+    budget = max(0, int(options.hostname_lookup_budget or options.reverse_dns_budget))
     if budget <= 0:
         return
-    lookups = 0
+    workers = max(1, int(options.hostname_lookup_workers or 1))
+    timeout = max(0.01, float(options.reverse_dns_timeout))
+    lookup = options.reverse_dns_lookup or _reverse_dns_lookup
+
+    targets: list[str] = []
     for row in accumulator._devices:
-        if lookups >= budget or _is_cancelled(options):
-            return
+        if len(targets) >= budget:
+            break
         ip = str(row.get("ip") or "")
         if not ip or row.get("hostname"):
             continue
-        lookup = options.reverse_dns_lookup or _reverse_dns_lookup
-        hostname = lookup(ip, options.reverse_dns_timeout)
-        lookups += 1
-        if hostname:
-            accumulator.merge({"ip": ip, "hostname": hostname, "discovered_by": ["reverse-dns"]}, "reverse-dns")
+        targets.append(ip)
+    if not targets or _is_cancelled(options):
+        return
+
+    pool_size = min(workers, len(targets))
+    with ThreadPoolExecutor(max_workers=pool_size) as pool:
+        futures = {pool.submit(lookup, ip, timeout): ip for ip in targets}
+        for future in as_completed(futures):
+            if _is_cancelled(options):
+                # Best-effort cancellation: stop merging results; in-flight
+                # workers will time out on their own.
+                for pending in futures:
+                    pending.cancel()
+                return
+            ip = futures[future]
+            try:
+                hostname = future.result()
+            except Exception:
+                hostname = ""
+            if hostname:
+                accumulator.merge(
+                    {"ip": ip, "hostname": hostname, "discovered_by": ["reverse-dns"]},
+                    "reverse-dns",
+                )
 
 
 def _reverse_dns_lookup(ip: str, timeout: float) -> str:
@@ -1353,31 +1402,63 @@ def _netbios_lookup(ip: str, timeout: float) -> str:
 
 
 def _fill_netbios_names(accumulator: _DeviceAccumulator, options: DiscoveryOptions) -> None:
-    """Resolve NetBIOS hostnames for devices still missing a hostname.
+    """Parallel NetBIOS hostname enrichment for already-observed devices.
 
-    Bounded by the same reverse-DNS budget so total enrichment stays cheap.
+    This is NOT active network discovery -- it only iterates devices the
+    accumulator has already seen on the private LAN (via ARP / neighbor /
+    mDNS / SSDP / DHCP). That makes it safe to run during passive scans
+    too: many home / SMB hosts answer NetBIOS but have empty reverse-DNS,
+    and skipping this step in passive mode used to leave most rows blank
+    in the GUI.
+
+    Bounded by ``hostname_lookup_budget`` and ``hostname_lookup_workers``,
+    with ``netbios_lookup_timeout`` as the per-lookup timeout. If
+    ``nbtstat`` / ``nmblookup`` aren't installed, each lookup fails fast
+    and we move on.
     """
-    budget = max(0, int(options.reverse_dns_budget))
+    budget = max(0, int(options.hostname_lookup_budget or options.reverse_dns_budget))
     if budget <= 0:
         return
-    timeout = max(0.5, float(options.reverse_dns_timeout) * 6)
-    lookups = 0
+    workers = max(1, int(options.hostname_lookup_workers or 1))
+    timeout = max(0.5, float(options.netbios_lookup_timeout or options.reverse_dns_timeout * 6))
+
+    targets: list[str] = []
     for row in accumulator._devices:
-        if lookups >= budget or _is_cancelled(options):
-            return
+        if len(targets) >= budget:
+            break
         ip = str(row.get("ip") or "")
         if not ip or row.get("hostname"):
             continue
-        try:
-            name = _netbios_lookup(ip, timeout)
-        except Exception:
-            name = ""
-        lookups += 1
-        if name:
-            accumulator.merge(
-                {"ip": ip, "hostname": name, "discovered_by": ["netbios"]},
-                "netbios",
-            )
+        targets.append(ip)
+    if not targets or _is_cancelled(options):
+        return
+
+    pool_size = min(workers, len(targets))
+    with ThreadPoolExecutor(max_workers=pool_size) as pool:
+        futures = {pool.submit(_safe_netbios_lookup, ip, timeout): ip for ip in targets}
+        for future in as_completed(futures):
+            if _is_cancelled(options):
+                for pending in futures:
+                    pending.cancel()
+                return
+            ip = futures[future]
+            try:
+                name = future.result()
+            except Exception:
+                name = ""
+            if name:
+                accumulator.merge(
+                    {"ip": ip, "hostname": name, "discovered_by": ["netbios"]},
+                    "netbios",
+                )
+
+
+def _safe_netbios_lookup(ip: str, timeout: float) -> str:
+    """Wrapper that never raises -- callers run this in a thread pool."""
+    try:
+        return _netbios_lookup(ip, timeout)
+    except Exception:
+        return ""
 
 
 def _normalize_row(raw: Mapping[str, Any], source: str, timestamp: str) -> dict[str, Any]:

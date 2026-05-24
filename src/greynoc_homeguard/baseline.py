@@ -168,6 +168,26 @@ class BaselineStore:
             # Carry through transparency flags for the GUI / report layer.
             if metadata.get("hostname_synthesized"):
                 row["hostname_synthesized"] = True
+
+            # Persist the full identity-resolution record so reports and the
+            # GUI can show "where did this name / type come from?" without
+            # rerunning the resolver. Each field is optional in the metadata
+            # blob; we only store keys that the resolver populated.
+            for key in (
+                "friendly_name",
+                "real_hostname",
+                "hostname_source",
+                "device_type_source",
+                "vendor_source",
+                "resolved_vendor",
+                "resolution_evidence",
+            ):
+                value = metadata.get(key)
+                if value not in (None, "", []):
+                    row[key] = value
+            # vendor_source isn't always set by the resolver; keep the legacy
+            # "extended_oui" fallback so older devices recorded before the
+            # identity layer rolled out still show *something*.
             if metadata.get("resolved_vendor") and not row.get("vendor_source"):
                 row["vendor_source"] = "extended_oui"
 
