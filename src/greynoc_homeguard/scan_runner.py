@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 from .baseline import BaselineStore
 from .definitions import DefinitionManager, active_scan_ports
+from .edr.assessment import assess_endpoint_findings
 from .diff import compute_scan_diff, load_previous_report, render_summary
 from .engine import HomeGuardEngine
 from .history import HistoryEntry, ProtectionHistory
@@ -156,9 +157,11 @@ def run_full_scan(
     if summary_line:
         _emit(progress, summary_line)
     if endpoint_scan:
+        endpoint_findings_for_assessment: list[Finding] = []
         try:
             endpoint = run_endpoint_malware_scan(progress=progress)
             _attach_endpoint_scan(report, endpoint.findings, endpoint.metadata)
+            endpoint_findings_for_assessment = list(endpoint.findings or [])
         except Exception as exc:
             LOG.error("Endpoint malware scan failed: %s", exc)
             report.scan_metadata["endpoint_malware_scan"] = {
@@ -166,6 +169,32 @@ def run_full_scan(
                 "status": "failed",
                 "error": str(exc),
             }
+            # EDR Phase 1: a failed endpoint scan still gets an assessment
+            # block so reports always have a consistent endpoint_assessment
+            # key; the level is "not_run" so consumers don't alert on it.
+            report.scan_metadata["endpoint_assessment"] = {
+                "level": "not_run",
+                "summary": "Endpoint assessment was not run because the endpoint scan failed.",
+                "metadata": {"phase": "edr_phase_1", "reason": "endpoint_scan_failed"},
+            }
+        else:
+            # EDR Phase 1: translate the endpoint findings into an evidence
+            # chain + a single compromise level call, then attach to
+            # report.scan_metadata so downstream JSON / HTML / PDF readers
+            # can surface it without doing their own scoring.
+            assessment = assess_endpoint_findings(
+                endpoint_findings_for_assessment,
+                metadata={"scanner": "homeguard_endpoint_scan"},
+            )
+            report.scan_metadata["endpoint_assessment"] = assessment.as_dict()
+    else:
+        # Endpoint scan disabled via --no-endpoint-scan. Stamp the field so
+        # consumers always see *something* under endpoint_assessment.
+        report.scan_metadata["endpoint_assessment"] = {
+            "level": "not_run",
+            "summary": "Endpoint assessment was not run for this scan.",
+            "metadata": {"phase": "edr_phase_1", "reason": "endpoint_scan_disabled"},
+        }
     _emit(progress, "Writing local HTML, PDF, JSON, and CSV reports")
     paths = export_report(report, out)
     if update_known_devices:
