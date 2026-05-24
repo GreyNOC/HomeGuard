@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld("homeguard", {
   openPath: (targetPath) => ipcRenderer.invoke("homeguard:open-path", targetPath),
   showItem: (targetPath) => ipcRenderer.invoke("homeguard:show-item", targetPath),
   windowAction: (action) => ipcRenderer.invoke("homeguard:window-action", action),
+  findings: {
+    list: () => ipcRenderer.invoke("homeguard:findings-list"),
+    playbook: (finding) => ipcRenderer.invoke("homeguard:playbook-get", finding),
+    action: (payload) => ipcRenderer.invoke("homeguard:playbook-action", payload),
+  },
   chats: {
     list: () => ipcRenderer.invoke("homeguard:chats-list"),
     get: (id) => ipcRenderer.invoke("homeguard:chats-get", id),

@@ -27,6 +27,7 @@ const scanOrb3D = typeof window.initScanOrb3D === "function" ? window.initScanOr
 const tabs = {
   protection: $("protectionTab"),
   devices: $("devicesTab"),
+  findings: $("findingsTab"),
   history: $("historyTab"),
   schedule: $("scheduleTab"),
   logs: $("logsTab"),
@@ -35,6 +36,7 @@ const tabs = {
 const pages = {
   protection: $("protectionPage"),
   devices: $("devicesPage"),
+  findings: $("findingsPage"),
   history: $("historyPage"),
   schedule: $("schedulePage"),
   logs: $("logsPage"),
@@ -501,6 +503,10 @@ tabs.devices.addEventListener("click", () => {
   setActiveTab("devices");
   loadDevices();
 });
+tabs.findings.addEventListener("click", () => {
+  setActiveTab("findings");
+  loadFindings();
+});
 tabs.history.addEventListener("click", () => {
   setActiveTab("history");
   loadHistory();
@@ -583,3 +589,274 @@ if (window.homeguard?.definitionsStatus) {
 
 refreshDisabledActions();
 updateScanIndicator();
+
+// =============================================================
+// Findings + fix-guidance playbooks
+// =============================================================
+const findingsApi = window.homeguard?.findings || null;
+const findingsListEl = $("findingsList");
+const findingsMetaEl = $("findingsMeta");
+const findingsRefreshBtn = $("findingsRefresh");
+const playbookDrawer = $("playbookDrawer");
+const playbookDrawerClose = $("playbookDrawerClose");
+const playbookDrawerTitle = $("playbookDrawerTitle");
+const playbookDrawerSeverity = $("playbookDrawerSeverity");
+const playbookDrawerSummary = $("playbookDrawerSummary");
+const playbookDrawerSteps = $("playbookDrawerSteps");
+const playbookDrawerActions = $("playbookDrawerActions");
+const playbookDrawerPatched = $("playbookDrawerPatched");
+const playbookDrawerStatus = $("playbookDrawerStatus");
+
+let cachedFindings = [];
+let activePlaybookFinding = null;
+
+const SEVERITY_RANK_FINDINGS = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+
+function sortedFindingsList(items) {
+  return [...items].sort((a, b) => {
+    const rs = (SEVERITY_RANK_FINDINGS[String(b.severity || "").toLowerCase()] || 0) -
+      (SEVERITY_RANK_FINDINGS[String(a.severity || "").toLowerCase()] || 0);
+    if (rs !== 0) return rs;
+    return Number(b.risk_score || 0) - Number(a.risk_score || 0);
+  });
+}
+
+function relativeFindingTime(iso) {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  const diff = Math.max(0, Date.now() - then.getTime());
+  const min = Math.floor(diff / 60000);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return then.toISOString().slice(0, 10);
+}
+
+function renderFindings() {
+  if (!findingsListEl) return;
+  clearChildren(findingsListEl);
+  const items = sortedFindingsList(cachedFindings);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "meta";
+    empty.textContent = "No findings in the latest scan.";
+    findingsListEl.appendChild(empty);
+    return;
+  }
+  for (const finding of items) {
+    const row = document.createElement("article");
+    row.className = "finding-row";
+    row.dataset.findingId = String(finding.finding_id || "");
+    if (finding.patched_at) row.classList.add("is-patched");
+    const severity = String(finding.severity || "info").toLowerCase();
+    row.classList.add(`severity-${severity}`);
+
+    const badge = document.createElement("span");
+    badge.className = `finding-severity sev-${severity}`;
+    badge.textContent = severity.toUpperCase();
+
+    const body = document.createElement("div");
+    body.className = "finding-body";
+    const title = document.createElement("p");
+    title.className = "finding-title";
+    title.textContent = String(finding.title || finding.rule_id || "Finding");
+    const sub = document.createElement("p");
+    sub.className = "finding-sub meta";
+    const device = String(finding.device_name || finding.device_ip || "unknown device");
+    const score = Number(finding.risk_score || 0).toFixed(1);
+    sub.textContent = `${device} - score ${score} - ${String(finding.rule_id || "")}`;
+    body.appendChild(title);
+    body.appendChild(sub);
+    if (finding.patched_at) {
+      const patched = document.createElement("p");
+      patched.className = "finding-patched";
+      patched.textContent = `Marked patched ${relativeFindingTime(finding.patched_at)}`;
+      body.appendChild(patched);
+    }
+
+    const fixBtn = document.createElement("button");
+    fixBtn.type = "button";
+    fixBtn.className = "action accent";
+    fixBtn.textContent = "Show me how to fix this";
+    fixBtn.addEventListener("click", () => openPlaybook(finding));
+
+    row.appendChild(badge);
+    row.appendChild(body);
+    row.appendChild(fixBtn);
+    findingsListEl.appendChild(row);
+  }
+}
+
+async function loadFindings() {
+  if (!findingsApi) {
+    if (findingsMetaEl) {
+      findingsMetaEl.textContent = "Findings IPC unavailable. Reload the app.";
+    }
+    return;
+  }
+  if (findingsRefreshBtn) findingsRefreshBtn.disabled = true;
+  try {
+    const result = await findingsApi.list();
+    if (!result || !result.ok) {
+      cachedFindings = [];
+      if (findingsMetaEl) {
+        findingsMetaEl.textContent = (result && result.message) || "No findings available yet.";
+      }
+      renderFindings();
+      return;
+    }
+    cachedFindings = Array.isArray(result.findings) ? result.findings : [];
+    if (findingsMetaEl) {
+      const when = relativeFindingTime(result.created_at);
+      findingsMetaEl.textContent = `${cachedFindings.length} finding(s) from the latest scan${when ? ` (${when})` : ""}.`;
+    }
+    renderFindings();
+  } finally {
+    if (findingsRefreshBtn) findingsRefreshBtn.disabled = false;
+  }
+}
+
+function showPlaybookStatus(message, kind = "info") {
+  if (!playbookDrawerStatus) return;
+  playbookDrawerStatus.textContent = message || "";
+  playbookDrawerStatus.dataset.kind = kind;
+}
+
+function closePlaybook() {
+  if (!playbookDrawer) return;
+  playbookDrawer.classList.remove("is-open");
+  playbookDrawer.setAttribute("aria-hidden", "true");
+  activePlaybookFinding = null;
+}
+
+function renderPlaybook(playbook) {
+  if (!playbookDrawer) return;
+  playbookDrawerTitle.textContent = String(playbook.title || "Playbook");
+  playbookDrawerSeverity.textContent = String(playbook.severity_note || "");
+  playbookDrawerSummary.textContent = String(playbook.summary || "");
+  if (playbook.patched_at) {
+    playbookDrawerPatched.hidden = false;
+    playbookDrawerPatched.textContent = `Marked patched ${relativeFindingTime(playbook.patched_at)}`;
+  } else {
+    playbookDrawerPatched.hidden = true;
+    playbookDrawerPatched.textContent = "";
+  }
+  clearChildren(playbookDrawerSteps);
+  const steps = Array.isArray(playbook.steps) ? playbook.steps : [];
+  for (const step of steps) {
+    const li = document.createElement("li");
+    li.className = "playbook-step";
+    const title = document.createElement("p");
+    title.className = "playbook-step-title";
+    title.textContent = String(step.title || "");
+    const body = document.createElement("p");
+    body.className = "playbook-step-body";
+    body.textContent = String(step.body || "");
+    li.appendChild(title);
+    li.appendChild(body);
+    playbookDrawerSteps.appendChild(li);
+  }
+  clearChildren(playbookDrawerActions);
+  const actions = Array.isArray(playbook.actions) ? playbook.actions : [];
+  for (const action of actions) {
+    const wrap = document.createElement("div");
+    wrap.className = "playbook-action-wrap";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "action " + (action.destructive ? "danger" : "accent");
+    btn.textContent = String(action.label || action.action_id || "Action");
+    btn.addEventListener("click", () => dispatchPlaybookAction(action));
+    wrap.appendChild(btn);
+    if (action.help) {
+      const help = document.createElement("p");
+      help.className = "playbook-action-help";
+      help.textContent = String(action.help);
+      wrap.appendChild(help);
+    }
+    playbookDrawerActions.appendChild(wrap);
+  }
+  showPlaybookStatus("");
+  playbookDrawer.classList.add("is-open");
+  playbookDrawer.setAttribute("aria-hidden", "false");
+}
+
+async function openPlaybook(finding) {
+  if (!findingsApi || !playbookDrawer) return;
+  activePlaybookFinding = finding;
+  playbookDrawerTitle.textContent = "Loading playbook...";
+  playbookDrawerSeverity.textContent = "";
+  playbookDrawerSummary.textContent = "";
+  clearChildren(playbookDrawerSteps);
+  clearChildren(playbookDrawerActions);
+  playbookDrawerPatched.hidden = true;
+  showPlaybookStatus("");
+  playbookDrawer.classList.add("is-open");
+  playbookDrawer.setAttribute("aria-hidden", "false");
+  try {
+    const result = await findingsApi.playbook(finding);
+    if (!result || !result.ok || !result.playbook) {
+      showPlaybookStatus((result && result.message) || "Could not load playbook.", "error");
+      playbookDrawerTitle.textContent = "Playbook unavailable";
+      return;
+    }
+    renderPlaybook(result.playbook);
+  } catch (error) {
+    showPlaybookStatus(error?.message || String(error), "error");
+    playbookDrawerTitle.textContent = "Playbook unavailable";
+  }
+}
+
+async function dispatchPlaybookAction(action) {
+  if (!action) return;
+  if (action.kind === "navigate_devices") {
+    closePlaybook();
+    setActiveTab("devices");
+    loadDevices();
+    return;
+  }
+  if (!findingsApi) {
+    showPlaybookStatus("Action backend unavailable.", "error");
+    return;
+  }
+  showPlaybookStatus(`Running ${action.label}...`, "info");
+  try {
+    const payload = {
+      kind: action.kind,
+      action_id: action.action_id,
+      payload: { ...(action.payload || {}) },
+    };
+    // Carry finding context onto patch / trust actions so the backend
+    // doesn't have to round-trip back to the renderer.
+    if (activePlaybookFinding) {
+      payload.payload.finding_id = payload.payload.finding_id || activePlaybookFinding.finding_id;
+      payload.payload.rule_id = payload.payload.rule_id || activePlaybookFinding.rule_id;
+    }
+    const result = await findingsApi.action(payload);
+    if (!result || !result.ok) {
+      showPlaybookStatus((result && result.message) || "Action failed.", "error");
+      return;
+    }
+    showPlaybookStatus(result.message || "Done.", "success");
+    // If we patched, refresh the findings list so the row picks up the badge.
+    if (action.kind === "mark_patched" && activePlaybookFinding) {
+      activePlaybookFinding.patched_at = result.patch?.patched_at || new Date().toISOString();
+      const idx = cachedFindings.findIndex((f) => f.finding_id === activePlaybookFinding.finding_id);
+      if (idx >= 0) cachedFindings[idx] = { ...cachedFindings[idx], patched_at: activePlaybookFinding.patched_at };
+      renderFindings();
+      playbookDrawerPatched.hidden = false;
+      playbookDrawerPatched.textContent = `Marked patched ${relativeFindingTime(activePlaybookFinding.patched_at)}`;
+    }
+  } catch (error) {
+    showPlaybookStatus(error?.message || String(error), "error");
+  }
+}
+
+if (findingsRefreshBtn) findingsRefreshBtn.addEventListener("click", loadFindings);
+if (playbookDrawerClose) playbookDrawerClose.addEventListener("click", closePlaybook);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && playbookDrawer && playbookDrawer.classList.contains("is-open")) {
+    closePlaybook();
+  }
+});

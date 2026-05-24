@@ -43,6 +43,7 @@
         <nav class="tabs" aria-label="GreyNOC sections">
           <button class="tab active icon-chat" id="protectionTab" type="button"><span>Ask GreyNOC</span></button>
           <button class="tab icon-devices" id="devicesTab" type="button"><span>Devices</span></button>
+          <button class="tab icon-status" id="findingsTab" type="button"><span>Findings</span></button>
           <button class="tab icon-history" id="historyTab" type="button"><span>Scan History</span></button>
           <button class="tab icon-schedule" id="scheduleTab" type="button"><span>Schedule</span></button>
           <button class="tab icon-logs" id="logsTab" type="button"><span>Logs</span></button>
@@ -213,6 +214,36 @@
               <p id="scheduleStatus" class="meta">Scheduled scans are disabled.</p>
             </div>
           </section>
+        </section>
+
+        <section id="findingsPage" class="page">
+          <section class="panel page-panel">
+            <div class="section-heading">
+              <h2>Findings</h2>
+              <p class="meta">Every finding from the latest scan with a step-by-step playbook for fixing it.</p>
+            </div>
+            <div class="toolbar page-toolbar">
+              <button id="findingsRefresh" class="action secondary icon-refresh" type="button">Refresh</button>
+              <span id="findingsMeta" class="meta">No scan yet. Run Scan from the protection panel.</span>
+            </div>
+            <div id="findingsList" class="findings-list" aria-label="Findings"></div>
+          </section>
+
+          <aside id="playbookDrawer" class="playbook-drawer" aria-label="Fix guidance" aria-hidden="true">
+            <header class="playbook-drawer-header">
+              <div class="playbook-drawer-heading">
+                <p class="eyebrow">Fix guidance</p>
+                <h2 id="playbookDrawerTitle">Playbook</h2>
+                <p id="playbookDrawerSeverity" class="meta"></p>
+              </div>
+              <button id="playbookDrawerClose" class="playbook-drawer-close" type="button" aria-label="Close playbook">×</button>
+            </header>
+            <p id="playbookDrawerPatched" class="playbook-patched" hidden></p>
+            <p id="playbookDrawerSummary" class="playbook-summary"></p>
+            <ol id="playbookDrawerSteps" class="playbook-steps"></ol>
+            <div id="playbookDrawerActions" class="playbook-actions"></div>
+            <p id="playbookDrawerStatus" class="playbook-status meta" aria-live="polite"></p>
+          </aside>
         </section>
 
         <section id="logsPage" class="page">
