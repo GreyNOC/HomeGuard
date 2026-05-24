@@ -111,6 +111,9 @@ for (const channel of [
   "homeguard:chats-delete",
   "homeguard:chats-set-active",
   "homeguard:chats-rename",
+  "homeguard:findings-list",
+  "homeguard:playbook-get",
+  "homeguard:playbook-action",
 ]) {
   if (!main.includes(channel)) {
     throw new Error(`Missing IPC channel ${channel}`);
@@ -136,6 +139,7 @@ for (const apiName of [
   "saveHtmlAs",
   "windowAction",
   "chats",
+  "findings",
 ]) {
   if (!preload.includes(`${apiName}:`)) {
     throw new Error(`Missing preload API ${apiName}`);
@@ -148,6 +152,9 @@ if (!indexHtml.includes("chatMessages") || !indexHtml.includes("chatForm") || !i
 }
 if (!indexHtml.includes("chatList") || !indexHtml.includes("chats-section")) {
   throw new Error("Renderer HTML is missing the chat history sidebar list.");
+}
+if (!indexHtml.includes("findingsList") || !indexHtml.includes("playbookDrawer") || !indexHtml.includes("findingsTab")) {
+  throw new Error("Renderer HTML is missing the findings tab + playbook drawer.");
 }
 
 const css = fs.readFileSync(path.join(root, "electron", "renderer", "styles.css"), "utf8");
@@ -177,6 +184,11 @@ if (!renderer.includes("Active Scan On") || !renderer.includes("Scanning Now")) 
 }
 if (renderer.includes("devicesTableBody.innerHTML") || renderer.includes("historyTableBody.innerHTML")) {
   throw new Error("Renderer data tables must be built with DOM nodes instead of HTML strings.");
+}
+for (const symbol of ["loadFindings", "openPlaybook", "dispatchPlaybookAction", "renderPlaybook", "closePlaybook"]) {
+  if (!renderer.includes(symbol)) {
+    throw new Error(`Findings/playbook wiring is missing: ${symbol}`);
+  }
 }
 
 const chatAssistant = fs.readFileSync(path.join(root, "electron", "renderer", "chat-assistant.js"), "utf8");

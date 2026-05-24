@@ -31,6 +31,7 @@ from .engine import HomeGuardEngine
 from .history import ProtectionHistory
 from .logging_setup import setup_logging
 from .models import Device
+from .playbooks import playbook_for_finding
 from .paths import (
     custom_rules_file,
     default_baseline_path,
@@ -658,6 +659,47 @@ def cmd_devices_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_playbook_show(args: argparse.Namespace) -> int:
+    """Emit the fix-guidance playbook for a finding as JSON.
+
+    Reads the finding's JSON from --finding-json (string), --finding-file
+    (path), or stdin. The renderer uses this to populate the "Show me how
+    to fix this" drawer.
+    """
+    finding_text = ""
+    if getattr(args, "finding_json", None):
+        finding_text = str(args.finding_json)
+    elif getattr(args, "finding_file", None):
+        try:
+            finding_text = Path(args.finding_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"error: could not read --finding-file: {exc}", file=sys.stderr)
+            return 2
+    else:
+        try:
+            finding_text = sys.stdin.read()
+        except OSError as exc:
+            print(f"error: could not read finding from stdin: {exc}", file=sys.stderr)
+            return 2
+
+    finding_text = finding_text.strip()
+    if not finding_text:
+        print("error: no finding JSON provided (use --finding-json, --finding-file, or stdin)", file=sys.stderr)
+        return 2
+    try:
+        finding = json.loads(finding_text)
+    except json.JSONDecodeError as exc:
+        print(f"error: finding JSON is not valid: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(finding, dict):
+        print("error: finding JSON must be an object", file=sys.stderr)
+        return 2
+
+    playbook = playbook_for_finding(finding)
+    print(json.dumps(playbook.as_dict(), indent=2))
+    return 0
+
+
 def cmd_status(_args: argparse.Namespace) -> int:
     definitions = DefinitionManager().status()
     schedule = ScheduleManager().load()
@@ -897,6 +939,29 @@ def build_parser() -> argparse.ArgumentParser:
     devices_remove = devices_sub.add_parser("remove", help="Remove a device from the known list", formatter_class=HomeGuardHelpFormatter)
     devices_remove.add_argument("device", help="Device IP, MAC, or fingerprint")
     devices_remove.set_defaults(func=cmd_devices_remove)
+
+    playbook = sub.add_parser(
+        "playbook",
+        help="Show the fix-guidance playbook for a finding",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    playbook_sub = playbook.add_subparsers(dest="playbook_command")
+    playbook_show = playbook_sub.add_parser(
+        "show",
+        help="Emit the playbook for a finding as JSON",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    playbook_show.add_argument(
+        "--finding-json",
+        default=None,
+        help="Finding JSON as a literal string (otherwise read from stdin)",
+    )
+    playbook_show.add_argument(
+        "--finding-file",
+        default=None,
+        help="Path to a JSON file containing the finding (otherwise read from stdin)",
+    )
+    playbook_show.set_defaults(func=cmd_playbook_show)
 
     return parser
 
