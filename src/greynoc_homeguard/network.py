@@ -25,7 +25,8 @@ from ._noc_core.map_accuracy import (
     recompute_confidence,
     source_count,
 )
-from .device_resolution import extended_vendor_from_mac, resolve_devices
+from .device_resolution import extended_vendor_from_mac
+from .identity_resolution import resolve_devices
 from .models import Device
 
 
@@ -596,12 +597,17 @@ def discover_local_network(
         allow_large_subnet=False,
         max_hosts=max_hosts,
         cancel_event=cancel_event,
-        # Wider reverse-DNS + NetBIOS budget so home networks of 15-30 devices
-        # actually get hostnames resolved. The engine default (8 lookups at
-        # 0.08s each) is tuned for fast SOC sweeps; a desktop home scanner
-        # can afford to wait long enough to name every host it sees.
+        # Hostname enrichment knobs. The vendored discovery engine now runs
+        # reverse-DNS + NetBIOS in parallel for already-observed devices
+        # (during passive scans too -- it's identity enrichment, not host
+        # discovery). reverse_dns_budget / reverse_dns_timeout are kept as
+        # legacy fallbacks for code paths that haven't picked up the newer
+        # hostname_lookup_* knobs yet.
         reverse_dns_budget=64,
         reverse_dns_timeout=0.5,
+        hostname_lookup_budget=64,
+        hostname_lookup_workers=16,
+        netbios_lookup_timeout=1.5,
     )
     if tcp_ports:
         ports = tuple(sorted({int(port) for port in tcp_ports if 0 < int(port) <= 65535}))
