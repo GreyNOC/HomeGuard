@@ -609,6 +609,11 @@ const playbookDrawerStatus = $("playbookDrawerStatus");
 
 let cachedFindings = [];
 let activePlaybookFinding = null;
+// Monotonic token used to discard stale playbook IPC responses. Each call
+// to openPlaybook bumps this; closePlaybook bumps it too. Any in-flight
+// findingsApi.playbook(...) promise checks the token before rendering so
+// a slow response for an older click can't overwrite a newer one.
+let activePlaybookRequestToken = 0;
 
 const SEVERITY_RANK_FINDINGS = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
 
@@ -729,6 +734,9 @@ function closePlaybook() {
   playbookDrawer.classList.remove("is-open");
   playbookDrawer.setAttribute("aria-hidden", "true");
   activePlaybookFinding = null;
+  // Invalidate any in-flight playbook fetch so a late response can't
+  // silently re-open the drawer with stale content.
+  activePlaybookRequestToken += 1;
 }
 
 function renderPlaybook(playbook) {
@@ -784,6 +792,11 @@ function renderPlaybook(playbook) {
 
 async function openPlaybook(finding) {
   if (!findingsApi || !playbookDrawer) return;
+  // Take a request token BEFORE awaiting anything. If the user clicks a
+  // different finding while this fetch is in flight, the second call will
+  // bump the token and our awaited result becomes stale - we drop it on
+  // the floor instead of overwriting the newer drawer content.
+  const token = ++activePlaybookRequestToken;
   activePlaybookFinding = finding;
   playbookDrawerTitle.textContent = "Loading playbook...";
   playbookDrawerSeverity.textContent = "";
@@ -796,6 +809,11 @@ async function openPlaybook(finding) {
   playbookDrawer.setAttribute("aria-hidden", "false");
   try {
     const result = await findingsApi.playbook(finding);
+    if (token !== activePlaybookRequestToken) {
+      // A newer click superseded this request. Drop the stale result
+      // silently so it cannot clobber the drawer's current content.
+      return;
+    }
     if (!result || !result.ok || !result.playbook) {
       showPlaybookStatus((result && result.message) || "Could not load playbook.", "error");
       playbookDrawerTitle.textContent = "Playbook unavailable";
@@ -803,6 +821,7 @@ async function openPlaybook(finding) {
     }
     renderPlaybook(result.playbook);
   } catch (error) {
+    if (token !== activePlaybookRequestToken) return;
     showPlaybookStatus(error?.message || String(error), "error");
     playbookDrawerTitle.textContent = "Playbook unavailable";
   }

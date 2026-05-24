@@ -1350,27 +1350,70 @@ ipcMain.handle("homeguard:playbook-action", async (_event, payload = {}) => {
         return { ok: false, message: "Defender scan is only available on Windows." };
       }
       const scanType = cleanString(data.scan_type, 16) === "quick" ? "1" : "2";
-      try {
-        const child = spawn(
-          "MpCmdRun.exe",
-          ["-Scan", "-ScanType", scanType],
-          { windowsHide: true, detached: true, stdio: "ignore" },
-        );
-        child.on("error", () => {
-          // Surfaced via stderr to the renderer is not useful here; the user
-          // sees the immediate ack below and Defender's own UI takes over.
-        });
-        child.unref();
-        return {
-          ok: true,
-          message:
-            scanType === "2"
-              ? "Started Defender full scan (runs in the background; 30-90 minutes)."
-              : "Started Defender quick scan.",
+      // ``spawn()`` does NOT throw synchronously when the executable is
+      // missing - it emits an asynchronous "error" event instead. The
+      // previous version swallowed that event and still returned
+      // ok: true, so users could be told "Defender full scan started"
+      // when MpCmdRun.exe wasn't on PATH at all. We now race the spawn
+      // event (success) against the error event (failure) with a short
+      // timeout backstop, and only return ok: true once the child has
+      // actually started.
+      return new Promise((resolve) => {
+        let child;
+        try {
+          child = spawn(
+            "MpCmdRun.exe",
+            ["-Scan", "-ScanType", scanType],
+            { windowsHide: true, detached: true, stdio: "ignore" },
+          );
+        } catch (err) {
+          // Synchronous spawn failures (rare - bad argv shape) still
+          // throw. Catch defensively.
+          resolve({
+            ok: false,
+            message: scrubText(
+              `Could not start Defender scan: ${err && err.message ? err.message : String(err)}`,
+            ),
+          });
+          return;
+        }
+        let settled = false;
+        const settle = (result) => {
+          if (settled) return;
+          settled = true;
+          resolve(result);
         };
-      } catch (err) {
-        return { ok: false, message: scrubText(err && err.message ? err.message : String(err)) };
-      }
+        child.once("spawn", () => {
+          // MpCmdRun launched. Detach so it survives this handler returning.
+          try { child.unref(); } catch (_) {}
+          settle({
+            ok: true,
+            message:
+              scanType === "2"
+                ? "Started Defender full scan (runs in the background; 30-90 minutes)."
+                : "Started Defender quick scan.",
+          });
+        });
+        child.once("error", (err) => {
+          // Most commonly ENOENT: MpCmdRun.exe is not on PATH or Defender
+          // isn't installed / has been replaced by another EDR.
+          settle({
+            ok: false,
+            message: scrubText(
+              `Could not start Defender scan: ${err && err.message ? err.message : String(err)}`,
+            ),
+          });
+        });
+        // Backstop: if neither "spawn" nor "error" fires within 2 seconds,
+        // assume the spawn is silently stuck and report failure rather
+        // than a false-positive success.
+        setTimeout(() => {
+          settle({
+            ok: false,
+            message: "Defender scan did not start (timed out waiting for MpCmdRun.exe).",
+          });
+        }, 2000);
+      });
     }
     default:
       return { ok: false, message: `Unknown action kind: ${kind}` };
