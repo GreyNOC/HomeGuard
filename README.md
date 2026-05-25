@@ -141,24 +141,26 @@ HomeGuard includes this NVD notice:
 This product uses data from the NVD API but is not endorsed or certified by the NVD.
 ```
 
-## Build a Signed Windows V1 Installer
+## Build a Signed Windows Installer
 
-V1 customer releases are signed setup installers. Configure a GreyNOC code-signing certificate through secure local storage or CI/CD secrets, then run:
+Customer releases are signed setup installers. Configure a GreyNOC
+code-signing certificate through secure local storage or CI/CD secrets,
+then run (the build script reads the version from `pyproject.toml`):
 
 ```powershell
-powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version 1.1.0
+powershell -NoProfile -File scripts\build_windows_installer.ps1
 ```
 
-Expected artifact:
+Expected artifact for the current release:
 
 ```text
-dist\installer\HomeGuard-Setup-v1.1.0.exe
+dist\installer\HomeGuard-Setup-v1.5.0.exe
 ```
 
 Verify before publishing:
 
 ```powershell
-powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.1.0.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.5.0.exe -ExpectedPublisher GreyNOC
 ```
 
 See `docs/release/BUILD_AND_SIGNING.md` and `docs/release/RELEASE_CHECKLIST.md` for the full release gate.

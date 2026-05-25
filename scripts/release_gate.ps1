@@ -14,6 +14,10 @@ if (-not $InstallerPath) {
     $InstallerPath = Join-Path $repo "dist\installer\HomeGuard-Setup-v$($Matches[1]).exe"
 }
 
+if (-not (Test-Path -LiteralPath $InstallerPath)) {
+    throw "Installer not found at expected release path: $InstallerPath. Run scripts\build_windows_installer.ps1 first."
+}
+
 function Invoke-GateStep {
     param([string]$Name, [scriptblock]$Step)
     Write-Host "== $Name =="
@@ -22,6 +26,14 @@ function Invoke-GateStep {
 
 Invoke-GateStep "Python tests" {
     python -m unittest discover -s tests -v
+}
+
+# npm ci ensures the release gate runs against the locked Electron dependency
+# tree (package-lock.json) instead of whatever happens to be in node_modules
+# on the release workstation. Required for reproducibility of the audit +
+# smoke checks below.
+Invoke-GateStep "Locked Node install" {
+    npm ci
 }
 
 Invoke-GateStep "Electron smoke test" {
@@ -78,4 +90,4 @@ Invoke-GateStep "Installer signature verification" {
     & (Join-Path $repo "scripts\verify_windows_signature.ps1") -Path $InstallerPath -ExpectedPublisher $ExpectedPublisher
 }
 
-Write-Host "V1 release gate passed."
+Write-Host "Production release gate passed."
