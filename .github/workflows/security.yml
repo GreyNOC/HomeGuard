@@ -55,6 +55,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install Node dependencies (locked)
+        run: npm ci
+
       - name: Run production npm audit
         run: npm audit --omit=dev --audit-level=high
 
