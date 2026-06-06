@@ -47,6 +47,7 @@
           <button class="tab icon-history" id="historyTab" type="button"><span>Scan History</span></button>
           <button class="tab icon-schedule" id="scheduleTab" type="button"><span>Schedule</span></button>
           <button class="tab icon-logs" id="logsTab" type="button"><span>Logs</span></button>
+          <button class="tab icon-chat" id="aiTab" type="button"><span>AI Settings</span></button>
         </nav>
 
         <section class="sidebar-section chats-section" aria-label="Chat history">
@@ -256,6 +257,106 @@
             <pre id="logsOutput" class="log-view">No log file yet.</pre>
           </section>
         </section>
+
+        <section id="aiPage" class="page">
+          <section class="panel page-panel">
+            <div class="section-heading">
+              <h2>AI Settings</h2>
+              <p class="meta">
+                Bring your own API. HomeGuard stores the provider and the name of the
+                environment variable that holds your key — never the key itself.
+                Sterile mode is the default and is always one click away.
+              </p>
+            </div>
+
+            <form id="aiSettingsForm" class="ai-settings-form" autocomplete="off">
+              <div class="ai-form-row">
+                <label for="aiProvider">Provider</label>
+                <select id="aiProvider" name="provider">
+                  <option value="sterile">Sterile (no AI calls)</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="custom_openai_compatible">Custom OpenAI-compatible endpoint</option>
+                </select>
+              </div>
+
+              <div class="ai-form-row">
+                <label for="aiModel">Model</label>
+                <input id="aiModel" type="text" placeholder="e.g. gpt-4.1-mini" />
+              </div>
+
+              <div class="ai-form-row">
+                <label for="aiApiKeyEnv">API key env-var name</label>
+                <input id="aiApiKeyEnv" type="text" placeholder="OPENAI_API_KEY" />
+                <p class="meta">
+                  HomeGuard reads the key from this environment variable at chat time.
+                  Set it in your shell or system environment before launching HomeGuard.
+                </p>
+                <p id="aiApiKeyStatus" class="meta"></p>
+              </div>
+
+              <div class="ai-form-row">
+                <label for="aiEndpoint">Endpoint (optional override)</label>
+                <input id="aiEndpoint" type="text" placeholder="https://api.openai.com/v1/chat/completions" />
+              </div>
+
+              <div class="ai-form-row">
+                <label for="aiShareLevel">Share level</label>
+                <select id="aiShareLevel" name="share_level">
+                  <option value="minimal">Minimal (hashes IPs, hostnames, MACs)</option>
+                  <option value="standard">Standard (keeps IPs + hostnames, hashes MACs)</option>
+                  <option value="full">Full (raw identifiers)</option>
+                </select>
+              </div>
+
+              <div class="ai-form-row toggles">
+                <label><input id="aiUseEngineTools" type="checkbox" checked /> Let the AI use HomeGuard's engine (tool calling)</label>
+                <label><input id="aiUseMemoryContext" type="checkbox" checked /> Let the AI use the local memory (past scans, your notes)</label>
+                <label><input id="aiUseTrafficContext" type="checkbox" /> Include a current network-traffic snapshot in every chat</label>
+              </div>
+
+              <div class="ai-form-actions">
+                <button id="aiSaveButton" class="action" type="submit">Save AI settings</button>
+                <button id="aiSterileButton" class="action secondary" type="button">Switch to sterile</button>
+                <button id="aiTestButton" class="action secondary" type="button">Test connection</button>
+              </div>
+              <p id="aiFormStatus" class="meta" aria-live="polite"></p>
+            </form>
+
+            <div class="ai-memory-panel">
+              <h3>What the AI has learned about this network</h3>
+              <p class="meta">
+                Local "training" memory. Notes, device facts, and recent scan trend snapshots
+                are saved here and injected into future AI chats. Sensitive identifiers are
+                redacted per your share level.
+              </p>
+              <div id="aiMemorySummary" class="ai-memory-summary"></div>
+              <form id="aiMemoryAddForm" class="ai-memory-add" autocomplete="off">
+                <textarea id="aiMemoryNote" rows="2" placeholder="Teach the AI a fact about this network (e.g. The camera on 192.168.1.42 is intentional)"></textarea>
+                <div class="ai-form-actions">
+                  <button class="action" type="submit">Save note</button>
+                  <button id="aiMemoryRefresh" class="action secondary" type="button">Refresh</button>
+                  <button id="aiMemoryClear" class="action secondary" type="button">Clear all memory</button>
+                </div>
+                <p id="aiMemoryStatus" class="meta" aria-live="polite"></p>
+              </form>
+            </div>
+
+            <div class="ai-traffic-panel">
+              <h3>Current network-traffic snapshot</h3>
+              <p class="meta">
+                Bounded connection summary derived from <code>psutil</code> / <code>netstat</code>.
+                No packet content is captured. This is the same view the AI receives.
+              </p>
+              <div class="ai-form-actions">
+                <button id="aiTrafficRefresh" class="action secondary" type="button">Refresh snapshot</button>
+              </div>
+              <pre id="aiTrafficOutput" class="log-view">Click "Refresh snapshot" to load the current snapshot.</pre>
+            </div>
+          </section>
+        </section>
       </main>
     </div>
 
@@ -264,5 +365,6 @@
     <script src="renderer.js"></script>
     <script src="chat-assistant.js"></script>
     <script src="scan-progress-chat.js"></script>
+    <script src="ai-settings.js"></script>
   </body>
 </html>

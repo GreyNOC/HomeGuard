@@ -111,6 +111,32 @@ class AIBridgeTests(unittest.TestCase):
         self.assertFalse(response.ok)
         self.assertIn(env_name, response.error)
 
+    def test_settings_round_trip_new_toggles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ai_settings.json"
+            configure_ai(
+                provider="anthropic",
+                model="claude-test",
+                api_key_env="ANTHROPIC_TEST",
+                share_level="standard",
+                use_engine_tools=False,
+                use_traffic_context=True,
+                use_memory_context=False,
+                path=path,
+            )
+            loaded = load_ai_settings(path=path)
+            self.assertFalse(loaded.use_engine_tools)
+            self.assertTrue(loaded.use_traffic_context)
+            self.assertFalse(loaded.use_memory_context)
+
+    def test_live_chat_sterile_returns_canned(self):
+        from greynoc_homeguard.ai_bridge import live_chat
+
+        settings = AISettings()  # sterile
+        response = live_chat("anything", settings=settings)
+        self.assertTrue(response.sterile)
+        self.assertEqual(response.provider, "sterile")
+
 
 if __name__ == "__main__":
     unittest.main()

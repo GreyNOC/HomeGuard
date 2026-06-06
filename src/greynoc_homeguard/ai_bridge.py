@@ -5,14 +5,18 @@ import hashlib
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import ai_memory, ai_tools, ai_traffic
 from .models import HomeGuardReport
 from .paths import atomic_write_text, user_data_dir
+
+MAX_TOOL_ITERATIONS = 4
 
 STERILE_PROVIDER = "sterile"
 SUPPORTED_PROVIDERS = {
@@ -71,6 +75,9 @@ class AISettings:
     share_level: str = DEFAULT_SHARE_LEVEL
     temperature: float = 0.2
     max_output_tokens: int = 900
+    use_engine_tools: bool = True
+    use_traffic_context: bool = False
+    use_memory_context: bool = True
     last_error: str = ""
 
     @classmethod
@@ -92,6 +99,9 @@ class AISettings:
             share_level=share_level,
             temperature=_safe_float(data.get("temperature"), 0.2),
             max_output_tokens=max(64, min(4096, _safe_int(data.get("max_output_tokens"), 900))),
+            use_engine_tools=_safe_bool(data.get("use_engine_tools"), True),
+            use_traffic_context=_safe_bool(data.get("use_traffic_context"), False),
+            use_memory_context=_safe_bool(data.get("use_memory_context"), True),
             last_error=str(data.get("last_error") or ""),
         )
 
@@ -105,6 +115,9 @@ class AISettings:
             "share_level": self.share_level,
             "temperature": self.temperature,
             "max_output_tokens": self.max_output_tokens,
+            "use_engine_tools": self.use_engine_tools,
+            "use_traffic_context": self.use_traffic_context,
+            "use_memory_context": self.use_memory_context,
             "last_error": self.last_error,
         }
 
@@ -146,6 +159,22 @@ def _safe_int(value: Any, fallback: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _safe_bool(value: Any, fallback: bool) -> bool:
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return fallback
 
 
 def ai_settings_file() -> Path:
@@ -215,6 +244,9 @@ def configure_ai(
     endpoint: str = "",
     share_level: str = DEFAULT_SHARE_LEVEL,
     enabled: bool = True,
+    use_engine_tools: bool | None = None,
+    use_traffic_context: bool | None = None,
+    use_memory_context: bool | None = None,
     path: Path | None = None,
 ) -> AISettings:
     normalized_provider = provider.strip().lower()
@@ -232,6 +264,9 @@ def configure_ai(
         api_key_env=api_key_env or default_api_key_env(normalized_provider),
         endpoint=endpoint or default_endpoint(normalized_provider),
         share_level=normalized_share,
+        use_engine_tools=True if use_engine_tools is None else bool(use_engine_tools),
+        use_traffic_context=False if use_traffic_context is None else bool(use_traffic_context),
+        use_memory_context=True if use_memory_context is None else bool(use_memory_context),
     )
     save_ai_settings(settings, path=path)
     return settings
@@ -450,15 +485,12 @@ def explain_report(
     settings = settings or load_ai_settings()
     if settings.is_sterile():
         return sterile_response()
+    record_report_snapshot(report)
     context = report_to_signal_context(report, share_level=settings.share_level)
-    messages = [
+    messages: list[dict[str, Any]] = [
         {
             "role": "system",
-            "content": (
-                "You are the user's chosen AI assistant inside HomeGuard. "
-                "Explain security signals in plain English. Do not claim proof of compromise. "
-                "Recommend safe defensive steps only. Ask for confirmation before suggesting risky changes."
-            ),
+            "content": _build_system_prompt(settings),
         },
         {
             "role": "user",
@@ -466,6 +498,115 @@ def explain_report(
         },
     ]
     return chat(messages, settings=settings)
+
+
+def live_chat(
+    user_prompt: str,
+    *,
+    history: list[dict[str, Any]] | None = None,
+    settings: AISettings | None = None,
+    include_traffic: bool | None = None,
+) -> AIResponse:
+    """High-level chat entry point used by the GUI.
+
+    Builds the system prompt with bounded memory context, optionally a
+    network-traffic snapshot, and delegates to :func:`chat`. The tool loop
+    (when enabled in settings) gives the model on-demand access to the
+    engine — report, devices, findings, memory, and traffic.
+    """
+
+    settings = settings or load_ai_settings()
+    if settings.is_sterile():
+        return sterile_response()
+    if include_traffic is None:
+        include_traffic = settings.use_traffic_context
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": _build_system_prompt(settings, include_traffic=include_traffic)},
+    ]
+    for entry in history or []:
+        role = entry.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        text = entry.get("content")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        messages.append({"role": role, "content": text})
+    messages.append({"role": "user", "content": user_prompt})
+    return chat(messages, settings=settings)
+
+
+def _build_system_prompt(settings: AISettings, *, include_traffic: bool = False) -> str:
+    parts = [
+        "You are the user's chosen AI assistant inside HomeGuard, a home network "
+        "security tool. Explain security signals in plain English. Do not claim "
+        "proof of compromise. Recommend safe defensive steps only. Ask for "
+        "confirmation before suggesting risky changes.",
+    ]
+    if settings.use_engine_tools:
+        parts.append(
+            "You have tools to read the latest HomeGuard scan, list devices, "
+            "look up findings, snapshot current network connections, and read or "
+            "write the local AI memory. Prefer calling a tool over guessing. "
+            f"All identifiers are redacted at share level '{settings.share_level}'."
+        )
+    else:
+        parts.append(
+            "Engine tool-calling is disabled, so reason only from the context provided in this prompt."
+        )
+    if settings.use_memory_context:
+        memory_snapshot = ai_memory.summarize_for_prompt()
+        if any(memory_snapshot.get(key) for key in ("notes", "device_facts", "signal_history")):
+            parts.append(
+                "Local AI memory (what HomeGuard has learned about this network "
+                "from past sessions):\n" + json.dumps(memory_snapshot, indent=2, sort_keys=True)
+            )
+    if include_traffic:
+        try:
+            summary = ai_traffic.collect_traffic_summary(share_level=settings.share_level)
+            parts.append(
+                "Current network-connection snapshot (no packet content captured):\n"
+                + json.dumps(summary.as_dict(), indent=2, sort_keys=True)
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            parts.append(f"Traffic snapshot unavailable: {exc}")
+    return "\n\n".join(parts)
+
+
+def record_report_snapshot(report: HomeGuardReport | dict[str, Any]) -> None:
+    """Save a bounded signal-trend snapshot into the local AI memory.
+
+    This is the "training on data" closure: HomeGuard cannot fine-tune a
+    cloud LLM but it can persistently remember the shape of past scans so
+    the assistant builds a picture of the network over time.
+    """
+
+    data = report.as_dict() if hasattr(report, "as_dict") else dict(report or {})
+    findings = data.get("findings") or []
+    devices = data.get("devices") or []
+    categories: dict[str, int] = {}
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        category = str(finding.get("category") or "uncategorized")
+        categories[category] = categories.get(category, 0) + 1
+    top_categories = [
+        category for category, _ in sorted(categories.items(), key=lambda item: item[1], reverse=True)[:5]
+    ]
+    try:
+        ai_memory.record_signal_snapshot(
+            ai_memory.SignalSnapshot(
+                created_at=time.time(),
+                overall_risk=str(data.get("overall_risk") or "unknown"),
+                overall_score=_safe_float(data.get("overall_score"), 0.0),
+                finding_count=len(findings),
+                device_count=len(devices),
+                top_categories=top_categories,
+            )
+        )
+    except OSError:
+        # Memory persistence is best-effort; never break a scan because the
+        # AI memory file is unwritable.
+        pass
 
 
 def chat(messages: list[dict[str, str]], *, settings: AISettings | None = None) -> AIResponse:
@@ -508,30 +649,94 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], *, ti
     return data
 
 
-def _chat_openai_compatible(messages: list[dict[str, str]], *, settings: AISettings, api_key: str) -> AIResponse:
+def _chat_openai_compatible(messages: list[dict[str, Any]], *, settings: AISettings, api_key: str) -> AIResponse:
     endpoint = settings.endpoint or default_endpoint(settings.provider)
     if not endpoint:
         return AIResponse(ok=False, provider=settings.provider, model=settings.model, text="", error="Missing endpoint")
     headers = {"Authorization": f"Bearer {api_key}"}
     if settings.provider == "openrouter":
         headers.update({"HTTP-Referer": "https://github.com/GreyNOC/HomeGuard", "X-Title": "HomeGuard"})
-    data = _post_json(
-        endpoint,
-        {
-            "model": settings.model,
-            "messages": messages,
-            "temperature": settings.temperature,
-            "max_tokens": settings.max_output_tokens,
-        },
-        headers,
-    )
+    payload: dict[str, Any] = {
+        "model": settings.model,
+        "messages": messages,
+        "temperature": settings.temperature,
+        "max_tokens": settings.max_output_tokens,
+    }
+    if settings.use_engine_tools:
+        payload["tools"] = ai_tools.tool_definitions_openai()
+    if settings.use_engine_tools:
+        return _openai_tool_loop(payload, endpoint=endpoint, headers=headers, settings=settings)
+    data = _post_json(endpoint, payload, headers)
     text = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
     return AIResponse(ok=bool(text), provider=settings.provider, model=settings.model, text=text, raw=data)
 
 
-def _chat_anthropic(messages: list[dict[str, str]], *, settings: AISettings, api_key: str) -> AIResponse:
-    system_parts = [item.get("content", "") for item in messages if item.get("role") == "system"]
-    user_messages = [item for item in messages if item.get("role") != "system"]
+def _openai_tool_loop(
+    payload: dict[str, Any],
+    *,
+    endpoint: str,
+    headers: dict[str, str],
+    settings: AISettings,
+) -> AIResponse:
+    messages = list(payload["messages"])
+    for _ in range(MAX_TOOL_ITERATIONS):
+        payload["messages"] = messages
+        data = _post_json(endpoint, payload, headers)
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        tool_calls = message.get("tool_calls") or []
+        if not tool_calls:
+            text = (message.get("content") or "").strip()
+            return AIResponse(
+                ok=bool(text),
+                provider=settings.provider,
+                model=settings.model,
+                text=text,
+                raw=data,
+            )
+        messages.append(message)
+        for call in tool_calls:
+            function = call.get("function") or {}
+            name = str(function.get("name") or "")
+            try:
+                args = json.loads(function.get("arguments") or "{}")
+            except (TypeError, ValueError):
+                args = {}
+            result = ai_tools.dispatch_tool(name, args, share_level=settings.share_level)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.get("id") or name,
+                    "content": json.dumps(result),
+                }
+            )
+    return AIResponse(
+        ok=False,
+        provider=settings.provider,
+        model=settings.model,
+        text="",
+        error=f"AI exceeded the {MAX_TOOL_ITERATIONS}-iteration tool loop without finishing.",
+    )
+
+
+def _chat_anthropic(messages: list[dict[str, Any]], *, settings: AISettings, api_key: str) -> AIResponse:
+    system_parts = [
+        item.get("content", "")
+        for item in messages
+        if item.get("role") == "system" and isinstance(item.get("content"), str)
+    ]
+    user_messages: list[dict[str, Any]] = []
+    for item in messages:
+        if item.get("role") == "system":
+            continue
+        user_messages.append(_anthropic_normalize_message(item))
+    if settings.use_engine_tools:
+        return _anthropic_tool_loop(
+            system="\n\n".join(system_parts),
+            messages=user_messages,
+            settings=settings,
+            api_key=api_key,
+        )
     data = _post_json(
         settings.endpoint or default_endpoint("anthropic"),
         {
@@ -543,8 +748,82 @@ def _chat_anthropic(messages: list[dict[str, str]], *, settings: AISettings, api
         },
         {"x-api-key": api_key, "anthropic-version": "2023-06-01"},
     )
-    text = "".join(part.get("text", "") for part in data.get("content", []) if isinstance(part, dict)).strip()
+    text = "".join(
+        part.get("text", "")
+        for part in data.get("content", [])
+        if isinstance(part, dict) and part.get("type") == "text"
+    ).strip()
     return AIResponse(ok=bool(text), provider=settings.provider, model=settings.model, text=text, raw=data)
+
+
+def _anthropic_normalize_message(item: dict[str, Any]) -> dict[str, Any]:
+    role = item.get("role") or "user"
+    content = item.get("content")
+    if isinstance(content, list):
+        return {"role": role, "content": content}
+    return {"role": role, "content": str(content or "")}
+
+
+def _anthropic_tool_loop(
+    *,
+    system: str,
+    messages: list[dict[str, Any]],
+    settings: AISettings,
+    api_key: str,
+) -> AIResponse:
+    endpoint = settings.endpoint or default_endpoint("anthropic")
+    headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    for _ in range(MAX_TOOL_ITERATIONS):
+        data = _post_json(
+            endpoint,
+            {
+                "model": settings.model,
+                "system": system,
+                "messages": messages,
+                "temperature": settings.temperature,
+                "max_tokens": settings.max_output_tokens,
+                "tools": ai_tools.tool_definitions_anthropic(),
+            },
+            headers,
+        )
+        blocks = data.get("content") or []
+        tool_uses = [block for block in blocks if isinstance(block, dict) and block.get("type") == "tool_use"]
+        if not tool_uses:
+            text = "".join(
+                block.get("text", "")
+                for block in blocks
+                if isinstance(block, dict) and block.get("type") == "text"
+            ).strip()
+            return AIResponse(
+                ok=bool(text),
+                provider=settings.provider,
+                model=settings.model,
+                text=text,
+                raw=data,
+            )
+        messages.append({"role": "assistant", "content": blocks})
+        tool_results: list[dict[str, Any]] = []
+        for block in tool_uses:
+            name = str(block.get("name") or "")
+            args = block.get("input") or {}
+            if not isinstance(args, dict):
+                args = {}
+            result = ai_tools.dispatch_tool(name, args, share_level=settings.share_level)
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.get("id") or name,
+                    "content": json.dumps(result),
+                }
+            )
+        messages.append({"role": "user", "content": tool_results})
+    return AIResponse(
+        ok=False,
+        provider=settings.provider,
+        model=settings.model,
+        text="",
+        error=f"AI exceeded the {MAX_TOOL_ITERATIONS}-iteration tool loop without finishing.",
+    )
 
 
 def _chat_gemini(messages: list[dict[str, str]], *, settings: AISettings, api_key: str) -> AIResponse:
@@ -597,6 +876,9 @@ def build_parser() -> argparse.ArgumentParser:
     configure.add_argument("--api-key-env", default="")
     configure.add_argument("--endpoint", default="")
     configure.add_argument("--share-level", choices=sorted(SHARE_LEVELS), default=DEFAULT_SHARE_LEVEL)
+    configure.add_argument("--tools", choices=["on", "off"], default="on", help="Enable engine tool-calling for the LLM")
+    configure.add_argument("--traffic", choices=["on", "off"], default="off", help="Include a current network-traffic snapshot in chats")
+    configure.add_argument("--memory", choices=["on", "off"], default="on", help="Include the local AI memory in chats")
     configure.add_argument("--json", action="store_true")
 
     explain = sub.add_parser("explain", help="Send a HomeGuard report to the selected AI provider")
@@ -606,7 +888,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_cmd = sub.add_parser("chat", help="Send a single chat message to the selected AI provider")
     chat_cmd.add_argument("message")
+    chat_cmd.add_argument("--include-traffic", action="store_true", help="Force a network-traffic snapshot into this turn")
     chat_cmd.add_argument("--json", action="store_true")
+
+    memory = sub.add_parser("memory", help="Manage the local AI memory store")
+    memory_sub = memory.add_subparsers(dest="memory_command", required=True)
+    memory_sub.add_parser("show", help="Show the bounded memory summary used in prompts")
+    memory_add = memory_sub.add_parser("add", help="Persist a free-form note for the assistant")
+    memory_add.add_argument("text")
+    memory_add.add_argument("--tag", action="append", default=[])
+    memory_sub.add_parser("clear", help="Erase all stored AI memory")
+
+    traffic = sub.add_parser("traffic", help="Print the bounded network-traffic snapshot the AI would receive")
+    traffic.add_argument("--json", action="store_true")
+
+    sub.add_parser(
+        "chat-ipc",
+        help="Read a JSON request from stdin and emit a JSON response. Used by the Electron IPC.",
+    )
     return parser
 
 
@@ -615,9 +914,14 @@ def _settings_cli_payload(settings: AISettings) -> dict[str, Any]:
         "enabled": settings.enabled,
         "provider": settings.provider,
         "model": settings.model,
+        "endpoint": settings.endpoint,
+        "api_key_env": settings.api_key_env,
         "share_level": settings.share_level,
         "temperature": settings.temperature,
         "max_output_tokens": settings.max_output_tokens,
+        "use_engine_tools": settings.use_engine_tools,
+        "use_traffic_context": settings.use_traffic_context,
+        "use_memory_context": settings.use_memory_context,
         "sterile": settings.is_sterile(),
     }
 
@@ -653,6 +957,9 @@ def main(argv: list[str] | None = None) -> int:
             api_key_env=args.api_key_env,
             endpoint=args.endpoint,
             share_level=args.share_level,
+            use_engine_tools=(args.tools == "on"),
+            use_traffic_context=(args.traffic == "on"),
+            use_memory_context=(args.memory == "on"),
         )
         if args.json:
             print(json.dumps(_settings_cli_payload(settings), indent=2, sort_keys=True))
@@ -668,12 +975,62 @@ def main(argv: list[str] | None = None) -> int:
             print(response.text or response.error)
         return 0 if response.ok else 2
     if args.command == "chat":
-        response = chat([{"role": "user", "content": args.message}])
+        response = live_chat(args.message, include_traffic=args.include_traffic)
         if args.json:
             print(json.dumps(response.as_dict(), indent=2, sort_keys=True))
         else:
             print(response.text or response.error)
         return 0 if response.ok else 2
+    if args.command == "memory":
+        if args.memory_command == "show":
+            print(json.dumps(ai_memory.summarize_for_prompt(), indent=2, sort_keys=True))
+            return 0
+        if args.memory_command == "add":
+            note = ai_memory.add_note(text=args.text, tags=list(args.tag or []))
+            print(json.dumps(note.as_dict(), indent=2, sort_keys=True))
+            return 0
+        if args.memory_command == "clear":
+            ai_memory.clear_memory()
+            print("AI memory cleared.")
+            return 0
+    if args.command == "chat-ipc":
+        import sys as _sys
+
+        try:
+            payload = json.loads(_sys.stdin.read() or "{}")
+        except json.JSONDecodeError as exc:
+            print(json.dumps({"ok": False, "error": f"Bad JSON on stdin: {exc}"}))
+            return 2
+        if not isinstance(payload, dict):
+            print(json.dumps({"ok": False, "error": "Stdin must be a JSON object"}))
+            return 2
+        message = str(payload.get("message") or "")
+        history = payload.get("history") or []
+        if not isinstance(history, list):
+            history = []
+        include_traffic = bool(payload.get("include_traffic"))
+        response = live_chat(message, history=history, include_traffic=include_traffic)
+        print(json.dumps(response.as_dict(), indent=2, sort_keys=True))
+        return 0 if response.ok else 2
+    if args.command == "traffic":
+        share_level = load_ai_settings().share_level
+        summary = ai_traffic.collect_traffic_summary(share_level=share_level)
+        payload = summary.as_dict()
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"source            : {payload['source']}")
+            print(f"total_connections : {payload['total_connections']}")
+            print(f"listening_ports   : {payload['listening_ports']}")
+            print("established_remote_top:")
+            for row in payload["established_remote_top"][:10]:
+                print(f"  - {row}")
+            print("process_top:")
+            for row in payload["process_top"][:10]:
+                print(f"  - {row}")
+            if payload["note"]:
+                print(f"note              : {payload['note']}")
+        return 0
     return 2
 
 

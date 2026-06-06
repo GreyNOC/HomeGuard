@@ -41,5 +41,15 @@ contextBridge.exposeInMainWorld("homeguard", {
     setActive: (id) => ipcRenderer.invoke("homeguard:chats-set-active", id),
     rename: (id, title) => ipcRenderer.invoke("homeguard:chats-rename", id, title),
   },
+  ai: {
+    status: () => ipcRenderer.invoke("homeguard:ai-status"),
+    sterile: () => ipcRenderer.invoke("homeguard:ai-sterile"),
+    configure: (payload) => ipcRenderer.invoke("homeguard:ai-configure", payload),
+    chat: (payload) => ipcRenderer.invoke("homeguard:ai-chat", payload),
+    memoryShow: () => ipcRenderer.invoke("homeguard:ai-memory-show"),
+    memoryAdd: (payload) => ipcRenderer.invoke("homeguard:ai-memory-add", payload),
+    memoryClear: () => ipcRenderer.invoke("homeguard:ai-memory-clear"),
+    traffic: () => ipcRenderer.invoke("homeguard:ai-traffic"),
+  },
   platform: process.platform,
 });
