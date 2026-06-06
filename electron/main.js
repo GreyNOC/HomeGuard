@@ -5,6 +5,7 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 const zlib = require("zlib");
 const { registerReportAssistantIpc } = require("./report_assistant_ipc");
+const { registerAiBridgeIpc } = require("./ai_bridge_ipc");
 
 const repoRoot = path.resolve(__dirname, "..");
 let mainWindow = null;
@@ -1426,6 +1427,7 @@ ipcMain.handle("homeguard:playbook-action", async (_event, payload = {}) => {
 });
 
 registerReportAssistantIpc();
+registerAiBridgeIpc();
 
 app.whenReady().then(createWindow);
 

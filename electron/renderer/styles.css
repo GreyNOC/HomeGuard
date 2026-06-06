@@ -1471,3 +1471,35 @@ textarea:focus-visible {
 }
 .playbook-status[data-kind="error"] { color: var(--danger); }
 .playbook-status[data-kind="success"] { color: var(--success); }
+
+/* AI Settings page */
+.ai-settings-form { display: flex; flex-direction: column; gap: 14px; max-width: 720px; }
+.ai-form-row { display: flex; flex-direction: column; gap: 6px; }
+.ai-form-row label { font-weight: 600; font-size: 13px; }
+.ai-form-row input,
+.ai-form-row select,
+.ai-form-row textarea {
+  background: var(--surface-2, #0e1a2c);
+  color: var(--text, #e6edf6);
+  border: 1px solid var(--border, #1b2c47);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+}
+.ai-form-row.toggles { gap: 8px; }
+.ai-form-row.toggles label { display: flex; gap: 8px; align-items: center; font-weight: 500; }
+.ai-form-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+#aiFormStatus[data-tone="ok"],
+#aiMemoryStatus[data-tone="ok"] { color: var(--success, #16a34a); }
+#aiFormStatus[data-tone="warn"],
+#aiMemoryStatus[data-tone="warn"],
+#aiApiKeyStatus[data-tone="warn"] { color: var(--warning, #d97706); }
+#aiApiKeyStatus[data-tone="ok"] { color: var(--success, #16a34a); }
+
+.ai-memory-panel, .ai-traffic-panel { margin-top: 28px; }
+.ai-memory-panel h3, .ai-traffic-panel h3 { margin: 0 0 6px; font-size: 16px; }
+.ai-memory-summary { display: flex; flex-direction: column; gap: 14px; margin: 10px 0; }
+.ai-memory-section h4 { margin: 0 0 6px; font-size: 13px; }
+.ai-memory-section ul { margin: 0; padding-left: 18px; }
+.ai-memory-add { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.ai-memory-add textarea { min-height: 56px; }

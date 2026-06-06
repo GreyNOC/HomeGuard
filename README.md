@@ -47,16 +47,28 @@ HomeGuard uses `HomeGuardDetectionEngine` for the consumer findings. The engine 
 
 HomeGuard is sterile by default: it does not send scan signals, reports, device inventory, or chat messages to an AI provider unless the user explicitly enables one.
 
-Users can choose OpenAI, Anthropic, OpenRouter, Gemini, or a custom OpenAI-compatible endpoint. API keys stay in environment variables; HomeGuard only stores provider settings and the name of the key variable.
+Users can choose OpenAI, Anthropic, OpenRouter, Gemini, or a custom OpenAI-compatible endpoint. API keys stay in environment variables; HomeGuard only stores provider settings and the name of the key variable. The configuration UI is built into the desktop app under **AI Settings** in the sidebar — open it to pick a provider, paste a model name, set the env-var that holds your key, and tune share-level and feature toggles.
+
+When a provider is configured, the in-app chat routes through your chosen LLM and the assistant can:
+
+- **Use the engine via tool calls** — the model can read the latest scan, list devices, look up findings, snapshot current network connections, and read/write the local AI memory on its own. Bounded to four tool iterations per turn.
+- **Train on your network locally** — HomeGuard does not fine-tune cloud LLMs, but it persists a bounded local memory store (notes, device facts, recent scan-trend snapshots) and re-injects it into every chat. The assistant gets steadily smarter about *this* network without anything leaving the box.
+- **See bounded current network traffic** — a connection-summary feed derived from `psutil`/`netstat` (no packet capture) can be attached to chats. External endpoints are hashed in `minimal` share level.
+
+CLI:
 
 ```bash
 python -m greynoc_homeguard.ai_bridge status
 python -m greynoc_homeguard.ai_bridge sterile
 python -m greynoc_homeguard.ai_bridge configure openai --model gpt-4.1-mini --share-level minimal
 python -m greynoc_homeguard.ai_bridge explain --report path/to/report.json
+python -m greynoc_homeguard.ai_bridge chat "What should I fix first?"
+python -m greynoc_homeguard.ai_bridge memory show
+python -m greynoc_homeguard.ai_bridge memory add "trust the camera on 192.168.1.42"
+python -m greynoc_homeguard.ai_bridge traffic --json
 ```
 
-See `docs/AI_BRIDGE.md` for provider setup, privacy levels, and custom endpoint examples.
+See `docs/AI_BRIDGE.md` for provider setup, privacy levels, the engine tool list, and custom endpoint examples.
 
 ## Safety model
 

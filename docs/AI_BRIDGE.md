@@ -102,6 +102,86 @@ python -m greynoc_homeguard.ai_bridge explain --report path\to\report.json --que
 python -m greynoc_homeguard.ai_bridge chat "What does RDP exposure mean for a home PC?"
 ```
 
+## Configure the bridge from the GUI
+
+Open **AI Settings** in the HomeGuard sidebar. Pick a provider, paste the model
+name, set the environment-variable name HomeGuard should read the key from,
+and (optionally) override the endpoint. Three toggles control how the AI uses
+local data:
+
+- **Engine tools** — when on, the LLM can call into HomeGuard to read the
+  latest scan, list devices, look up findings, snapshot current network
+  connections, and read/write the local AI memory. When off, the model
+  reasons only from the prompt context you send.
+- **Memory context** — when on, the AI memory store is injected into every
+  chat turn so the assistant carries facts across sessions.
+- **Traffic snapshot** — when on, a bounded current-connections summary is
+  included with every chat. Off by default.
+
+Use the **Test connection** button to send a one-shot ping. Use **Switch to
+sterile** to disable all outbound calls in one click.
+
+## Engine tool calling
+
+When tool calling is enabled, HomeGuard exposes these tools to the LLM
+(provider-agnostic; mapped to OpenAI `tools` and Anthropic `tool_use`):
+
+- `homeguard_get_latest_report` — bounded signal context of the most recent
+  scan, redacted to the active share level.
+- `homeguard_list_devices` — up to N devices from the latest scan.
+- `homeguard_get_finding` — fetch findings by `rule_id` or `finding_id`.
+- `homeguard_get_traffic_summary` — current connection snapshot (no packet
+  content captured).
+- `homeguard_get_memory` — recall notes, device facts, and recent scan
+  trend snapshots.
+- `homeguard_save_memory_note` — persist a short note for future chats.
+- `homeguard_record_device_fact` — persist structured facts (label, trust,
+  owner) keyed by device fingerprint. Fingerprints are hashed in
+  minimal/standard share levels.
+
+The tool loop is bounded to four iterations per turn so a misbehaving model
+cannot run away.
+
+## Local AI memory ("training")
+
+HomeGuard cannot fine-tune a cloud LLM. The next-best thing — and what most
+users mean by "let it train on my data" — is a persistent local memory that
+gets injected back into prompts. The store lives at:
+
+```text
+%LOCALAPPDATA%\GreyNOC\HomeGuard\ai_memory.json
+```
+
+It holds three buckets, each bounded in size:
+
+- `notes`           — free-form facts the user (or AI) has saved.
+- `device_facts`    — label / trust / owner / risk keyed by device fingerprint.
+- `signal_history`  — recent scan trend snapshots (counts, top finding
+  categories, overall risk/score).
+
+A signal snapshot is recorded automatically whenever the AI explains a
+report, so the trend view fills up as you use the app.
+
+CLI helpers:
+
+```bash
+python -m greynoc_homeguard.ai_bridge memory show
+python -m greynoc_homeguard.ai_bridge memory add "trust the camera on 192.168.1.42"
+python -m greynoc_homeguard.ai_bridge memory clear
+```
+
+## Network-traffic snapshot
+
+HomeGuard does **not** capture raw packets. The traffic feed is a bounded
+connection-state summary built from `psutil.net_connections` (preferred) or
+`netstat` (fallback). External endpoints are hashed in `minimal` share level;
+LAN addresses pass through unchanged at `standard`. Run the snapshot the AI
+would receive:
+
+```bash
+python -m greynoc_homeguard.ai_bridge traffic --json
+```
+
 ## Design rules
 
 - AI is opt-in.
@@ -110,3 +190,5 @@ python -m greynoc_homeguard.ai_bridge chat "What does RDP exposure mean for a ho
 - Outbound context is intentionally bounded.
 - The assistant must stay defensive: explain indicators, avoid proof-of-compromise claims, and recommend safe actions.
 - Provider failures must not break scanning, reporting, or sterile operation.
+- Tool loops are bounded so a runaway model cannot exhaust quota.
+- Traffic capture is connection-summary only, never packet content.

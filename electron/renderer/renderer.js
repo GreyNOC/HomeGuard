@@ -31,6 +31,7 @@ const tabs = {
   history: $("historyTab"),
   schedule: $("scheduleTab"),
   logs: $("logsTab"),
+  ai: $("aiTab"),
 };
 
 const pages = {
@@ -40,6 +41,7 @@ const pages = {
   history: $("historyPage"),
   schedule: $("schedulePage"),
   logs: $("logsPage"),
+  ai: $("aiPage"),
 };
 
 const devicesTableBody = document.querySelector("#devicesTable tbody");

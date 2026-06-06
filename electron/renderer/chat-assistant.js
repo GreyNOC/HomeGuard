@@ -657,6 +657,31 @@
       || normalized === "scan";
   }
 
+  // Local fallback used when AI is sterile or the bridge is unavailable.
+  // Keeps the chat useful out-of-the-box without requiring a configured key.
+  async function localFallbackAnswer(prompt) {
+    const normalized = normalizedText(prompt);
+    if (isResistancePrompt(normalized)) return answerResistanceReport(prompt);
+    if (/fix first|priority|what should i fix|recommend|next step|next steps/.test(normalized)) return answerFixFirst();
+    if (/risky devices|suspicious devices|unknown devices|dangerous devices/.test(normalized)) return answerRiskyDevices();
+    if (/report|summary|summarize|explain latest|latest scan|risk/.test(normalized)) return answerLatestReport();
+    if (/rdp|3389|ssh|22|smb|445|telnet|23|ftp|21|vnc|5900|camera|router|printer|iot|port|open port|device/.test(normalized)) {
+      return answerPortOrDevice(prompt);
+    }
+    return answerLatestReport();
+  }
+
+  function aiHistoryFromState() {
+    // Send the recent in-memory turns to the AI as conversation context.
+    // We exclude the very last user message because respondToPrompt appends
+    // it just before calling here, and the LLM expects it as the prompt.
+    const recent = currentMessages.slice(-20, -1);
+    return recent
+      .filter((entry) => entry && (entry.role === "user" || entry.role === "assistant"))
+      .map((entry) => ({ role: entry.role, content: String(entry.content || "") }))
+      .filter((entry) => entry.content.trim());
+  }
+
   async function respondToPrompt(prompt) {
     const normalized = normalizedText(prompt);
 
@@ -685,25 +710,31 @@
       return;
     }
 
-    const thinking = addMessage("assistant", "Checking the latest GreyNOC report...");
+    const thinking = addMessage("assistant", "Thinking...");
     try {
-      let answer;
-      if (isResistancePrompt(normalized)) {
-        answer = await answerResistanceReport(prompt);
-      } else if (/fix first|priority|what should i fix|recommend|next step|next steps/.test(normalized)) {
-        answer = await answerFixFirst();
-      } else if (/risky devices|suspicious devices|unknown devices|dangerous devices/.test(normalized)) {
-        answer = await answerRiskyDevices();
-      } else if (/report|summary|summarize|explain latest|latest scan|risk/.test(normalized)) {
-        answer = await answerLatestReport();
-      } else if (/rdp|3389|ssh|22|smb|445|telnet|23|ftp|21|vnc|5900|camera|router|printer|iot|port|open port|device/.test(normalized)) {
-        answer = await answerPortOrDevice(prompt);
-      } else {
-        answer = await answerLatestReport();
+      const aiApi = window.homeguard && window.homeguard.ai;
+      if (aiApi && typeof aiApi.chat === "function") {
+        const history = aiHistoryFromState();
+        const result = await aiApi.chat({ message: prompt, history });
+        if (result && result.ok && result.response) {
+          if (result.response.sterile) {
+            // Sterile mode: keep the chat useful via the local fallback so
+            // users without an API key still get answers grounded in the
+            // latest report.
+            replaceMessage(thinking, await localFallbackAnswer(prompt));
+            return;
+          }
+          replaceMessage(thinking, result.response.text || result.response.error || "(empty response)");
+          return;
+        }
+        const errorText = (result && (result.message || (result.response && result.response.error))) || "";
+        if (errorText) {
+          replaceMessage(thinking, `AI provider error: ${errorText}\n\nFalling back to the local report summary.`);
+        }
       }
-      replaceMessage(thinking, answer);
+      replaceMessage(thinking, await localFallbackAnswer(prompt));
     } catch (error) {
-      replaceMessage(thinking, `I could not read the latest report safely. ${error.message || String(error)}`);
+      replaceMessage(thinking, `I could not complete this request. ${error.message || String(error)}`);
     }
   }
 
