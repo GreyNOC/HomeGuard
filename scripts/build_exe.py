@@ -248,10 +248,17 @@ def _sign_executable(output: Path, *, require_signing: bool) -> bool:
     cert_sha1 = os.environ.get("HOMEGUARD_SIGN_CERT_SHA1", "").strip()
     require_signing = require_signing or os.environ.get("HOMEGUARD_REQUIRE_SIGNING") == "1"
 
-    if not cert_path and not cert_sha1:
+    # A configured cert PATH is only usable if the file actually exists. CI sets
+    # HOMEGUARD_SIGN_CERT_PATH for every run, but in unsigned mode the PFX is
+    # never restored to disk - so treat a missing file as "no cert configured"
+    # and skip (or fail, when signing is required) instead of handing signtool a
+    # nonexistent path and crashing the whole build.
+    cert_file_present = bool(cert_path) and Path(cert_path).exists()
+    if not cert_file_present and not cert_sha1:
         message = (
-            "Signing skipped: set HOMEGUARD_SIGN_CERT_PATH and HOMEGUARD_SIGN_CERT_PASSWORD "
-            "or HOMEGUARD_SIGN_CERT_SHA1 to sign as GreyNOC."
+            "Signing skipped: no usable certificate. Set HOMEGUARD_SIGN_CERT_PATH "
+            "(to an existing .pfx) + HOMEGUARD_SIGN_CERT_PASSWORD, or "
+            "HOMEGUARD_SIGN_CERT_SHA1, to sign as GreyNOC."
         )
         if require_signing:
             raise RuntimeError(message)
@@ -267,7 +274,7 @@ def _sign_executable(output: Path, *, require_signing: bool) -> bool:
         return False
 
     cmd = [signtool, "sign", "/fd", "SHA256", "/tr", TIMESTAMP_URL, "/td", "SHA256"]
-    if cert_path:
+    if cert_file_present:
         cmd.extend(["/f", cert_path])
         if cert_password:
             cmd.extend(["/p", cert_password])
