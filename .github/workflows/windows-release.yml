@@ -209,10 +209,12 @@ jobs:
           }
           $notes = "Windows release for HomeGuard v$version.`n`n$signingLine`n`nAssets:`n- HomeGuard-Setup-v$version.exe installer`n- HomeGuard-Portable-v$version.exe portable executable`n- SHA256SUMS.txt checksums"
           $assets = @("${{ steps.assets.outputs.installer }}", "${{ steps.assets.outputs.portable }}", "${{ steps.assets.outputs.checksums }}")
+          # GitHub releases here are immutable (assets cannot be added or
+          # clobbered after publish), so refresh by deleting and recreating with
+          # the freshly built assets. The git tag is preserved (no --cleanup-tag).
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists; uploading/refreshing assets."
-            gh release upload $tag @assets --clobber
-          } else {
-            gh release create $tag @assets --title "HomeGuard v$version" --notes $notes --verify-tag
+            Write-Host "Release $tag exists; recreating it with fresh assets."
+            gh release delete $tag --yes
           }
+          gh release create $tag @assets --title "HomeGuard v$version" --notes $notes --verify-tag
