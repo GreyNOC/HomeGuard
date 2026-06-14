@@ -38,16 +38,17 @@
           </div>
         </div>
 
-        <button id="newChatButton" class="new-chat icon-plus" type="button"><span>New Chat</span></button>
+        <button id="newChatButton" class="new-chat icon-plus" type="button"><span>New chat</span></button>
 
         <nav class="tabs" aria-label="GreyNOC sections">
-          <button class="tab active icon-chat" id="protectionTab" type="button"><span>Ask GreyNOC</span></button>
+          <button class="tab active icon-chat" id="protectionTab" type="button"><span>Console</span></button>
           <button class="tab icon-devices" id="devicesTab" type="button"><span>Devices</span></button>
           <button class="tab icon-status" id="findingsTab" type="button"><span>Findings</span></button>
+          <button class="tab icon-scan" id="fileScanTab" type="button"><span>File Scan</span></button>
           <button class="tab icon-history" id="historyTab" type="button"><span>Scan History</span></button>
           <button class="tab icon-schedule" id="scheduleTab" type="button"><span>Schedule</span></button>
           <button class="tab icon-logs" id="logsTab" type="button"><span>Logs</span></button>
-          <button class="tab icon-chat" id="aiTab" type="button"><span>AI Settings</span></button>
+          <button class="tab icon-chat" id="aiTab" type="button"><span>Provider</span></button>
         </nav>
 
         <section class="sidebar-section chats-section" aria-label="Chat history">
@@ -57,7 +58,7 @@
         </section>
 
         <div class="sidebar-footer">
-          <p id="statusText">Ready. Ask GreyNOC or run a local scan.</p>
+          <p id="statusText">Ready. Run a local scan or ask about the latest report.</p>
         </div>
       </aside>
 
@@ -68,13 +69,13 @@
               <article class="message assistant-message">
                 <div class="avatar assistant-avatar" aria-hidden="true"></div>
                 <div class="message-card">
-                  <p class="eyebrow">GreyNOC Assistant</p>
-                  <h2>What do you want to check?</h2>
-                  <p>Ask me about your home network, devices, scan results, or what to fix first. I can also run local GreyNOC actions from this chat.</p>
+                  <p class="eyebrow">Local console</p>
+                  <h2>Start with a scan or review results</h2>
+                  <p>Ask about devices, scan findings, or the next fix. GreyNOC can also start local actions from this chat.</p>
                   <div class="prompt-grid" aria-label="Starter prompts">
                     <button class="prompt-chip" type="button" data-prompt="Run a local network scan">Run a local network scan</button>
                     <button class="prompt-chip" type="button" data-prompt="Explain my latest report">Explain my latest report</button>
-                    <button class="prompt-chip" type="button" data-prompt="What should I fix first?">What should I fix first?</button>
+                    <button class="prompt-chip" type="button" data-prompt="What should I fix first?">Prioritize fixes</button>
                     <button class="prompt-chip" type="button" data-prompt="Show risky devices">Show risky devices</button>
                   </div>
                 </div>
@@ -82,7 +83,7 @@
             </div>
 
             <form id="chatForm" class="chat-composer" autocomplete="off">
-              <textarea id="chatInput" rows="1" placeholder="Ask GreyNOC a security question..." aria-label="Ask GreyNOC a security question"></textarea>
+              <textarea id="chatInput" rows="1" placeholder="Ask about scans, devices, or fixes" aria-label="Ask about scans, devices, or fixes"></textarea>
               <button id="chatSendButton" class="icon-send" type="submit" aria-label="Send message"><span>Send</span></button>
             </form>
           </section>
@@ -92,7 +93,7 @@
               <div class="metric-copy">
                 <small>Network Risk</small>
                 <b id="riskValue">Not scanned</b>
-                <span>Run a scan to calculate risk.</span>
+                <span>Risk appears after the first scan.</span>
               </div>
               <div class="scan-indicator">
                 <div class="scan-orb" aria-label="Local continuous scan is idle">
@@ -108,17 +109,17 @@
               <article class="status-card compact">
                 <small>Device Trust</small>
                 <b id="deviceValue">-</b>
-                <span>Known devices stay local.</span>
+                <span>Device data stays on this machine.</span>
               </article>
               <article class="status-card compact">
                 <small>Security Updates</small>
-                <b id="updateValue">Checking...</b>
+                <b id="updateValue">Checking</b>
                 <span>Local CVE and KEV definitions.</span>
               </article>
             </section>
 
             <section class="panel quick-actions">
-              <h2>Quick Actions</h2>
+              <h2>Actions</h2>
               <label class="toggle"><input id="activeScan" type="checkbox" /> <span>Active scan</span></label>
               <label class="toggle"><input id="probeAll" type="checkbox" /> <span>Probe all bounded hosts</span></label>
               <button id="scanButton" class="action scan icon-scan" type="button">Run Scan</button>
@@ -136,7 +137,7 @@
               <div class="button-row">
                 <button id="openHtmlButton" class="action secondary icon-open" type="button" disabled>Open Report</button>
                 <button id="openPdfButton" class="action secondary icon-pdf" type="button" disabled>Open PDF</button>
-                <button id="saveHtmlButton" class="action secondary icon-save" type="button" disabled>Save HTML As...</button>
+                <button id="saveHtmlButton" class="action secondary icon-save" type="button" disabled>Save HTML As</button>
                 <button id="openFolderButton" class="action secondary icon-folder" type="button" disabled>Open Folder</button>
               </div>
             </section>
@@ -169,7 +170,7 @@
                 <tbody></tbody>
               </table>
             </div>
-            <p class="meta">Quarantine flags a device as Action Needed in scans and reports. To actually block traffic, remove the device from your router or change the WiFi password.</p>
+            <p class="meta">Quarantine marks the device as action needed. Blocking traffic still happens at your router or WiFi access point.</p>
           </section>
         </section>
 
@@ -221,7 +222,7 @@
           <section class="panel page-panel">
             <div class="section-heading">
               <h2>Findings</h2>
-              <p class="meta">Every finding from the latest scan with a step-by-step playbook for fixing it.</p>
+              <p class="meta">Latest scan findings with direct fix steps.</p>
             </div>
             <div class="toolbar page-toolbar">
               <button id="findingsRefresh" class="action secondary icon-refresh" type="button">Refresh</button>
@@ -237,7 +238,7 @@
                 <h2 id="playbookDrawerTitle">Playbook</h2>
                 <p id="playbookDrawerSeverity" class="meta"></p>
               </div>
-              <button id="playbookDrawerClose" class="playbook-drawer-close" type="button" aria-label="Close playbook">×</button>
+              <button id="playbookDrawerClose" class="playbook-drawer-close" type="button" aria-label="Close playbook">x</button>
             </header>
             <p id="playbookDrawerPatched" class="playbook-patched" hidden></p>
             <p id="playbookDrawerSummary" class="playbook-summary"></p>
@@ -245,6 +246,34 @@
             <div id="playbookDrawerActions" class="playbook-actions"></div>
             <p id="playbookDrawerStatus" class="playbook-status meta" aria-live="polite"></p>
           </aside>
+        </section>
+
+        <section id="fileScanPage" class="page">
+          <section class="panel page-panel">
+            <div class="section-heading">
+              <h2>File Scan</h2>
+              <p class="meta">Scan any file or folder for malware: known-bad hashes, embedded signatures, deceptive double extensions, and packed executables.</p>
+            </div>
+            <div class="toolbar page-toolbar">
+              <button id="scanFileButton" class="action scan icon-scan" type="button">Scan a File…</button>
+              <button id="scanFolderButton" class="action secondary icon-folder" type="button">Scan a Folder…</button>
+              <label class="toggle"><input id="scanQuarantineToggle" type="checkbox" /> <span>Quarantine high-confidence threats</span></label>
+              <span id="fileScanMeta" class="meta">Choose a file or folder to scan.</span>
+            </div>
+            <div id="fileScanResults" class="findings-list" aria-label="File scan results"></div>
+          </section>
+
+          <section class="panel page-panel">
+            <div class="section-heading">
+              <h2>Quarantine Vault</h2>
+              <p class="meta">Neutralized copies of removed threats. Restore puts a file back exactly as it was; delete is permanent.</p>
+            </div>
+            <div class="toolbar page-toolbar">
+              <button id="quarantineRefresh" class="action secondary icon-refresh" type="button">Refresh</button>
+              <span id="quarantineMeta" class="meta">Quarantine is empty.</span>
+            </div>
+            <div id="quarantineList" class="findings-list" aria-label="Quarantined files"></div>
+          </section>
         </section>
 
         <section id="logsPage" class="page">
@@ -261,11 +290,11 @@
         <section id="aiPage" class="page">
           <section class="panel page-panel">
             <div class="section-heading">
-              <h2>AI Settings</h2>
+              <h2>Provider Settings</h2>
               <p class="meta">
-                Bring your own API. HomeGuard stores the provider and the name of the
-                environment variable that holds your key — never the key itself.
-                Sterile mode is the default and is always one click away.
+                Optional external provider setup. HomeGuard stores the provider and
+                the environment variable name for your key, never the key itself.
+                Local-only mode is the default.
               </p>
             </div>
 
@@ -273,7 +302,7 @@
               <div class="ai-form-row">
                 <label for="aiProvider">Provider</label>
                 <select id="aiProvider" name="provider">
-                  <option value="sterile">Sterile (no AI calls)</option>
+                  <option value="sterile">Local only (no provider calls)</option>
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
                   <option value="openrouter">OpenRouter</option>
@@ -312,29 +341,28 @@
               </div>
 
               <div class="ai-form-row toggles">
-                <label><input id="aiUseEngineTools" type="checkbox" checked /> Let the AI use HomeGuard's engine (tool calling)</label>
-                <label><input id="aiUseMemoryContext" type="checkbox" checked /> Let the AI use the local memory (past scans, your notes)</label>
-                <label><input id="aiUseTrafficContext" type="checkbox" /> Include a current network-traffic snapshot in every chat</label>
+                <label><input id="aiUseEngineTools" type="checkbox" checked /> Allow provider tool calls to HomeGuard actions</label>
+                <label><input id="aiUseMemoryContext" type="checkbox" checked /> Include local memory from past scans and notes</label>
+                <label><input id="aiUseTrafficContext" type="checkbox" /> Include a current traffic summary with each provider chat</label>
               </div>
 
               <div class="ai-form-actions">
-                <button id="aiSaveButton" class="action" type="submit">Save AI settings</button>
-                <button id="aiSterileButton" class="action secondary" type="button">Switch to sterile</button>
+                <button id="aiSaveButton" class="action" type="submit">Save provider settings</button>
+                <button id="aiSterileButton" class="action secondary" type="button">Use local only</button>
                 <button id="aiTestButton" class="action secondary" type="button">Test connection</button>
               </div>
               <p id="aiFormStatus" class="meta" aria-live="polite"></p>
             </form>
 
             <div class="ai-memory-panel">
-              <h3>What the AI has learned about this network</h3>
+              <h3>Local chat memory</h3>
               <p class="meta">
-                Local "training" memory. Notes, device facts, and recent scan trend snapshots
-                are saved here and injected into future AI chats. Sensitive identifiers are
-                redacted per your share level.
+                Notes, device facts, and recent scan trends used for future chat
+                context. Sensitive identifiers are redacted according to your share level.
               </p>
               <div id="aiMemorySummary" class="ai-memory-summary"></div>
               <form id="aiMemoryAddForm" class="ai-memory-add" autocomplete="off">
-                <textarea id="aiMemoryNote" rows="2" placeholder="Teach the AI a fact about this network (e.g. The camera on 192.168.1.42 is intentional)"></textarea>
+                <textarea id="aiMemoryNote" rows="2" placeholder="Add a network note, for example: The camera on 192.168.1.42 is expected"></textarea>
                 <div class="ai-form-actions">
                   <button class="action" type="submit">Save note</button>
                   <button id="aiMemoryRefresh" class="action secondary" type="button">Refresh</button>
@@ -345,15 +373,15 @@
             </div>
 
             <div class="ai-traffic-panel">
-              <h3>Current network-traffic snapshot</h3>
+              <h3>Current traffic snapshot</h3>
               <p class="meta">
                 Bounded connection summary derived from <code>psutil</code> / <code>netstat</code>.
-                No packet content is captured. This is the same view the AI receives.
+                No packet content is captured. This is the same summary sent to a provider when enabled.
               </p>
               <div class="ai-form-actions">
                 <button id="aiTrafficRefresh" class="action secondary" type="button">Refresh snapshot</button>
               </div>
-              <pre id="aiTrafficOutput" class="log-view">Click "Refresh snapshot" to load the current snapshot.</pre>
+              <pre id="aiTrafficOutput" class="log-view">Refresh to load the current snapshot.</pre>
             </div>
           </section>
         </section>

@@ -33,6 +33,13 @@ contextBridge.exposeInMainWorld("homeguard", {
     playbook: (finding) => ipcRenderer.invoke("homeguard:playbook-get", finding),
     action: (payload) => ipcRenderer.invoke("homeguard:playbook-action", payload),
   },
+  fileScan: {
+    pickTarget: (options) => ipcRenderer.invoke("homeguard:pick-scan-target", options),
+    scan: (payload) => ipcRenderer.invoke("homeguard:scan-file", payload),
+    quarantineList: () => ipcRenderer.invoke("homeguard:quarantine-list"),
+    quarantineRestore: (entryId, options) => ipcRenderer.invoke("homeguard:quarantine-restore", entryId, options),
+    quarantineDelete: (entryId) => ipcRenderer.invoke("homeguard:quarantine-delete", entryId),
+  },
   chats: {
     list: () => ipcRenderer.invoke("homeguard:chats-list"),
     get: (id) => ipcRenderer.invoke("homeguard:chats-get", id),

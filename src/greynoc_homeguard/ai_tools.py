@@ -105,6 +105,78 @@ def tool_save_memory_note(args: dict[str, Any], share_level: str) -> dict[str, A
     return {"saved": True, "note": note.as_dict()}
 
 
+def _display_path(path: str, share_level: str) -> str:
+    """Full path only at the 'full' share level; basename otherwise."""
+    from pathlib import Path
+
+    if not path:
+        return ""
+    return path if share_level == "full" else Path(path).name
+
+
+def tool_scan_path(args: dict[str, Any], share_level: str) -> dict[str, Any]:
+    """Scan a file or folder on demand, optionally quarantining threats."""
+    from .remediation import scan_and_remediate
+
+    target = str(args.get("path") or "").strip()
+    if not target:
+        return {"error": "path is required."}
+    quarantine = bool(args.get("quarantine"))
+    try:
+        result = scan_and_remediate(target, quarantine=quarantine)
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"error": f"Scan failed: {exc}"}
+    findings = result["findings"]
+    metadata = result["metadata"]
+    actions = result["actions"]
+    return {
+        "target": _display_path(target, share_level),
+        "files_scanned": metadata.get("files_scanned", 0),
+        "detection_count": len(findings),
+        "detections": [
+            {
+                "rule_id": finding.rule_id,
+                "severity": finding.severity,
+                "confidence": round(finding.confidence, 2),
+                "file": _display_path(str((finding.evidence or {}).get("path") or ""), share_level),
+                "title": finding.title,
+            }
+            for finding in findings[:25]
+        ],
+        "quarantined": sum(1 for action in actions if action.get("action") == "quarantined"),
+        "actions": [
+            {
+                "action": action.get("action"),
+                "rule_id": action.get("rule_id"),
+                "file": _display_path(str(action.get("path") or ""), share_level),
+            }
+            for action in actions[:25]
+        ],
+    }
+
+
+def tool_list_quarantine(args: dict[str, Any], share_level: str) -> dict[str, Any]:
+    """List files currently held in the local quarantine vault."""
+    from .quarantine import QuarantineVault
+
+    vault = QuarantineVault().load()
+    entries = vault.entries()
+    return {
+        "stats": vault.stats(),
+        "entries": [
+            {
+                "entry_id": entry.entry_id,
+                "name": entry.original_name,
+                "severity": entry.severity,
+                "detection_rule": entry.detection_rule,
+                "quarantined_at": entry.quarantined_at,
+                "original_path": _display_path(entry.original_path, share_level),
+            }
+            for entry in entries[:50]
+        ],
+    }
+
+
 def tool_record_device_fact(args: dict[str, Any], share_level: str) -> dict[str, Any]:
     raw_fingerprint = str(args.get("fingerprint") or "").strip()
     if not raw_fingerprint:
@@ -175,6 +247,36 @@ TOOLS: list[dict[str, Any]] = [
         ),
         "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
         "handler": tool_get_traffic_summary,
+    },
+    {
+        "name": "homeguard_scan_path",
+        "description": (
+            "Scan a file or folder on this machine for malware using exact "
+            "known-bad hash matches, embedded content signatures, deceptive "
+            "double extensions, and a packed-executable heuristic. Set "
+            "quarantine=true to neutralize high-confidence detections into the "
+            "local quarantine vault (recoverable). File paths are reduced to "
+            "names unless the user opted into the 'full' share level."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute path to a file or folder."},
+                "quarantine": {"type": "boolean", "description": "Quarantine high-confidence detections."},
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        "handler": tool_scan_path,
+    },
+    {
+        "name": "homeguard_list_quarantine",
+        "description": (
+            "List files currently held in HomeGuard's local quarantine vault, "
+            "with the detection that caused each one and vault statistics."
+        ),
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        "handler": tool_list_quarantine,
     },
     {
         "name": "homeguard_get_memory",

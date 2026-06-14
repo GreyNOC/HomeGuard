@@ -10,7 +10,11 @@ SRC = ROOT / "src"
 if str(SRC) not in os.sys.path:
     os.sys.path.insert(0, str(SRC))
 
+os.environ.setdefault("HOMEGUARD_DATA_DIR", tempfile.mkdtemp(prefix="hg_aitools_"))
+
 from greynoc_homeguard import ai_memory, ai_tools  # noqa: E402
+
+_MARKER = b"HOMEGUARD-INTERNAL-SCANNER-TEST-SIGNATURE in a file"
 
 
 SAMPLE_REPORT = {
@@ -99,6 +103,33 @@ class AIToolsTests(unittest.TestCase):
                 )
             self.assertTrue(result["saved"])
             self.assertNotEqual(result["fingerprint"], "AA:BB:CC:DD:EE:01")
+
+    def test_scan_path_requires_path(self):
+        result = ai_tools.tool_scan_path({}, "minimal")
+        self.assertIn("error", result)
+
+    def test_scan_path_detects_and_redacts_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "secret_folder_name" / "dropper.ps1"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(_MARKER)
+            result = ai_tools.tool_scan_path({"path": str(target)}, "minimal")
+        self.assertGreaterEqual(result["detection_count"], 1)
+        # Minimal share level must not leak the full path, only the basename.
+        serialized = json.dumps(result)
+        self.assertNotIn("secret_folder_name", serialized)
+        self.assertIn("dropper.ps1", serialized)
+
+    def test_list_quarantine_shape(self):
+        result = ai_tools.tool_list_quarantine({}, "minimal")
+        self.assertIn("stats", result)
+        self.assertIn("entries", result)
+        self.assertIsInstance(result["entries"], list)
+
+    def test_new_tools_registered(self):
+        names = {tool["name"] for tool in ai_tools.TOOLS}
+        self.assertIn("homeguard_scan_path", names)
+        self.assertIn("homeguard_list_quarantine", names)
 
     def test_openai_tool_schema_shape(self):
         defs = ai_tools.tool_definitions_openai()

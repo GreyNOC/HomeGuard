@@ -51,6 +51,38 @@ def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> N
         raise
 
 
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` atomically (binary counterpart of
+    :func:`atomic_write_text`).
+
+    Used by the quarantine vault, where a half-written neutralized blob would
+    corrupt a quarantined item and make restore impossible. Same crash-safe
+    contract: write to a sibling tempfile on the same volume, fsync, then
+    ``os.replace`` into place.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def app_root() -> Path:
     """Return the best root folder for source, editable installs, or PyInstaller builds."""
 
@@ -134,6 +166,19 @@ def schedule_file() -> Path:
 
 def settings_file() -> Path:
     return user_data_dir() / "settings.json"
+
+
+def quarantine_dir() -> Path:
+    """Vault folder holding neutralized copies of quarantined files plus the
+    quarantine index. Created on demand by the quarantine vault."""
+
+    return user_data_dir() / "quarantine"
+
+
+def realtime_events_file() -> Path:
+    """Bounded log of threats caught by the real-time watcher."""
+
+    return user_data_dir() / "realtime_events.json"
 
 
 def custom_rules_file() -> Path:

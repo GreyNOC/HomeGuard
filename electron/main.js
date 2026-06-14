@@ -694,6 +694,106 @@ ipcMain.handle("homeguard:scan-indicator", async (_event, state = {}) => {
   return { ok: true, active: isScanIndicatorActive(), ...scanIndicatorState };
 });
 
+function parseJsonStdout(stdout) {
+  // The CLI's --json mode prints exactly one JSON object on stdout. Be tolerant
+  // of any stray leading/trailing whitespace.
+  try {
+    return JSON.parse(String(stdout || "").trim());
+  } catch (error) {
+    return null;
+  }
+}
+
+ipcMain.handle("homeguard:pick-scan-target", async (event, options = {}) => {
+  options = isPlainObject(options) ? options : {};
+  const window = BrowserWindow.fromWebContents(event.sender) || mainWindow || undefined;
+  const properties = options.folder === true ? ["openDirectory"] : ["openFile"];
+  const result = await dialog.showOpenDialog(window, {
+    title: options.folder === true ? "Choose a folder to scan" : "Choose a file to scan",
+    properties,
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { ok: false, path: "" };
+  }
+  return { ok: true, path: result.filePaths[0] };
+});
+
+ipcMain.handle("homeguard:scan-file", async (_event, payload = {}) => {
+  payload = isPlainObject(payload) ? payload : {};
+  const targetPath = cleanString(payload.path, 4096);
+  if (!targetPath) {
+    return { ok: false, message: "No path provided." };
+  }
+  // Paths come from the native file dialog (always absolute), but guard against
+  // a leading dash being misread as a CLI flag by the argument parser.
+  if (targetPath.startsWith("-")) {
+    return { ok: false, message: "Invalid path." };
+  }
+  const command = payload.folder === true ? "scan-folder" : "scan-file";
+  const args = ["--json", command, targetPath];
+  if (payload.quarantine === true) {
+    args.push("--quarantine");
+  }
+  try {
+    const result = await runHomeGuard(args);
+    const parsed = parseJsonStdout(result.stdout);
+    if (!parsed) {
+      return { ok: false, message: "Scan produced no parseable result." };
+    }
+    return { ok: true, ...parsed };
+  } catch (error) {
+    return { ok: false, message: cleanString(error.message || "Scan failed.", 500) };
+  }
+});
+
+ipcMain.handle("homeguard:quarantine-list", async () => {
+  try {
+    const result = await runHomeGuard(["--json", "quarantine", "list", "--all"]);
+    const parsed = parseJsonStdout(result.stdout);
+    return { ok: true, entries: (parsed && parsed.entries) || [], stats: (parsed && parsed.stats) || {} };
+  } catch (error) {
+    return { ok: false, message: cleanString(error.message || "Could not read quarantine.", 500), entries: [], stats: {} };
+  }
+});
+
+function cleanQuarantineId(value) {
+  // Quarantine ids are uuid4 hex (or a unique prefix). Restrict to hex so a
+  // crafted value can never reach the CLI as an option or path fragment.
+  const cleaned = cleanString(value, 64).toLowerCase();
+  return /^[0-9a-f]{4,32}$/.test(cleaned) ? cleaned : "";
+}
+
+ipcMain.handle("homeguard:quarantine-restore", async (_event, entryId, options = {}) => {
+  options = isPlainObject(options) ? options : {};
+  const id = cleanQuarantineId(entryId);
+  if (!id) {
+    return { ok: false, message: "Invalid quarantine id." };
+  }
+  const args = ["quarantine", "restore", id];
+  if (options.overwrite === true) {
+    args.push("--overwrite");
+  }
+  try {
+    await runHomeGuard(args);
+    return { ok: true, message: "Restored file to its original location." };
+  } catch (error) {
+    return { ok: false, message: cleanString(error.message || "Restore failed.", 500) };
+  }
+});
+
+ipcMain.handle("homeguard:quarantine-delete", async (_event, entryId) => {
+  const id = cleanQuarantineId(entryId);
+  if (!id) {
+    return { ok: false, message: "Invalid quarantine id." };
+  }
+  try {
+    await runHomeGuard(["quarantine", "delete", id]);
+    return { ok: true, message: "Permanently deleted the quarantined file." };
+  } catch (error) {
+    return { ok: false, message: cleanString(error.message || "Delete failed.", 500) };
+  }
+});
+
 ipcMain.handle("homeguard:update-definitions", async () => {
   const result = await runHomeGuard(["update-definitions"]);
   return { stdout: scrubText(result.stdout), status: scrubObject(parseKeyValueOutput(result.stdout)) };

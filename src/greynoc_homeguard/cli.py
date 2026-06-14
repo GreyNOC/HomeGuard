@@ -39,9 +39,14 @@ from .paths import (
     ensure_app_dirs,
     user_data_dir,
 )
+from .quarantine import QuarantineError, QuarantineVault
+from .realtime import RealtimeWatcher, append_event, load_events
+from .remediation import quarantine_findings, scan_and_remediate
 from .reports import export_report
 from .scan_runner import run_full_scan
 from .scheduler import INTERVAL_VALUES, ScheduleManager
+from .settings import AppSettings
+from .signed_feed import load_signed_feed_file, update_hashes_from_url
 
 
 _COLOR = False
@@ -81,6 +86,11 @@ _BANNER = r"""
 _APP_STYLE_COMMANDS = {
     "--status": "status",
     "--scan": "scan",
+    "--scan-file": "scan-file",
+    "--scan-folder": "scan-folder",
+    "--quarantine": "quarantine",
+    "--watch": "watch",
+    "--update-hashes": "update-hashes",
     "--update-definitions": "update-definitions",
     "--definitions-status": "definitions-status",
     "--dashboard": "dashboard",
@@ -260,6 +270,10 @@ def _welcome(_parser: argparse.ArgumentParser) -> None:
         "App Commands",
         [
             ("scan", _command("--scan --active")),
+            ("scan file", _command("--scan-file <path> --quarantine")),
+            ("real-time", _command("--watch")),
+            ("quarantine", _command("--quarantine list")),
+            ("hash feed", _command("--update-hashes --url <https-url>")),
             ("status", _command("--status")),
             ("devices", _command("--devices list")),
             ("dashboard", _command("--dashboard --report <report.json>")),
@@ -343,6 +357,307 @@ def cmd_scan(args: argparse.Namespace) -> int:
             ("report_id", report.report_id),
         ],
         accent="green" if str(report.overall_risk).lower() == "clean" else "yellow",
+    )
+    return 0
+
+
+def _render_file_findings(findings: list, actions: list[dict[str, Any]]) -> None:
+    if findings:
+        _section_title("Detections")
+        rows = []
+        for finding in findings:
+            evidence = finding.evidence or {}
+            rows.append(
+                [
+                    _badge(finding.severity, _SEVERITY_COLOR),
+                    f"{finding.confidence:.2f}",
+                    finding.rule_id,
+                    evidence.get("path") or finding.title,
+                ]
+            )
+        _table(["severity", "conf", "rule", "file"], rows, max_cell=52)
+    else:
+        _ok("No threats detected in the scanned path.")
+    if actions:
+        quarantined = [a for a in actions if a.get("action") == "quarantined"]
+        skipped = [a for a in actions if a.get("action") == "skipped"]
+        failed = [a for a in actions if a.get("action") == "failed"]
+        _section_title("Remediation")
+        if quarantined:
+            _ok(f"Quarantined {len(quarantined)} file(s).")
+            _table(
+                ["entry_id", "rule", "file"],
+                [[a.get("entry_id", "")[:12], a.get("rule_id", ""), a.get("path", "")] for a in quarantined],
+                max_cell=52,
+            )
+        for action in failed:
+            _warn(f"Could not quarantine {action.get('path')}: {action.get('error')}")
+        if skipped:
+            _warn(
+                f"{len(skipped)} detection(s) left in place (below auto-quarantine bar). "
+                "Review them and remove manually if unwanted."
+            )
+
+
+def cmd_scan_path(args: argparse.Namespace) -> int:
+    """Scan an arbitrary file or folder for malware, optionally quarantining."""
+
+    def progress(message: str) -> None:
+        if _JSON_MODE:
+            return
+        print(f"{_style('[scan]', 'bold', 'cyan')} {message}", flush=True)
+
+    target = Path(args.path)
+    if not target.exists():
+        print(f"error: path does not exist: {target}", file=sys.stderr)
+        return 2
+
+    if not _JSON_MODE:
+        _rule(f"HomeGuard File Scan: {target.name}")
+    result = scan_and_remediate(target, quarantine=bool(args.quarantine), progress=progress)
+    findings = result["findings"]
+    metadata = result["metadata"]
+    actions = result["actions"]
+
+    if _JSON_MODE:
+        _emit_json(
+            {
+                "target": str(target),
+                "files_scanned": metadata.get("files_scanned", 0),
+                "finding_count": len(findings),
+                "findings": [finding.as_dict() for finding in findings],
+                "actions": actions,
+                "metadata": metadata,
+            }
+        )
+        return 0
+
+    _render_file_findings(findings, actions)
+    _panel(
+        "Scan Summary",
+        [
+            ("target", str(target)),
+            ("files_scanned", metadata.get("files_scanned", 0)),
+            ("detections", len(findings)),
+            ("quarantined", sum(1 for a in actions if a.get("action") == "quarantined")),
+            ("hash_signatures", metadata.get("hash_signatures", 0)),
+        ],
+        accent="green" if not findings else "yellow",
+    )
+    if findings and not args.quarantine:
+        print()
+        print(_muted(f"Tip: re-run with --quarantine to neutralize high-confidence detections."))
+    return 0
+
+
+def _resolve_quarantine_entry(vault: QuarantineVault, identifier: str) -> str | None:
+    """Resolve an entry id by exact match or unique prefix."""
+    identifier = identifier.strip().lower()
+    if not identifier:
+        return None
+    entries = vault.entries(include_inactive=True)
+    for entry in entries:
+        if entry.entry_id == identifier:
+            return entry.entry_id
+    matches = [entry.entry_id for entry in entries if entry.entry_id.startswith(identifier)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def cmd_quarantine_list(_args: argparse.Namespace) -> int:
+    vault = QuarantineVault().load()
+    entries = vault.entries(include_inactive=getattr(_args, "all", False))
+    if _JSON_MODE:
+        _emit_json({"entries": [entry.public_dict() for entry in entries], "stats": vault.stats()})
+        return 0
+    if not entries:
+        _ok("Quarantine vault is empty.")
+        return 0
+    _section_title("Quarantined Files")
+    rows = []
+    for entry in entries:
+        rows.append(
+            [
+                entry.entry_id[:12],
+                _badge(entry.severity or "-", _SEVERITY_COLOR),
+                entry.original_name,
+                entry.detection_rule,
+                entry.status,
+                entry.quarantined_at,
+            ]
+        )
+    _table(["id", "severity", "name", "rule", "status", "quarantined"], rows, max_cell=40)
+    stats = vault.stats()
+    _panel(
+        "Vault",
+        [
+            ("active", stats["active"]),
+            ("restored", stats["restored"]),
+            ("deleted", stats["deleted"]),
+            ("active_bytes", stats["active_bytes"]),
+            ("path", stats["vault_path"]),
+        ],
+    )
+    return 0
+
+
+def cmd_quarantine_restore(args: argparse.Namespace) -> int:
+    vault = QuarantineVault().load()
+    entry_id = _resolve_quarantine_entry(vault, args.entry_id)
+    if not entry_id:
+        print(f"error: no quarantine entry matches: {args.entry_id}", file=sys.stderr)
+        return 2
+    try:
+        target = vault.restore(entry_id, dest=args.to or None, overwrite=bool(args.overwrite))
+    except QuarantineError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    _ok(f"Restored {entry_id[:12]} to {target}")
+    return 0
+
+
+def cmd_quarantine_delete(args: argparse.Namespace) -> int:
+    vault = QuarantineVault().load()
+    entry_id = _resolve_quarantine_entry(vault, args.entry_id)
+    if not entry_id:
+        print(f"error: no quarantine entry matches: {args.entry_id}", file=sys.stderr)
+        return 2
+    try:
+        ok = vault.delete(entry_id)
+    except QuarantineError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if ok:
+        _ok(f"Permanently deleted quarantined file {entry_id[:12]}")
+    return 0
+
+
+def cmd_quarantine_purge(args: argparse.Namespace) -> int:
+    vault = QuarantineVault().load()
+    if not args.yes:
+        active = vault.stats()["active"]
+        print(f"error: this permanently deletes {active} quarantined file(s). Re-run with --yes to confirm.", file=sys.stderr)
+        return 2
+    count = vault.purge()
+    _ok(f"Purged {count} quarantined file(s).")
+    return 0
+
+
+def _print_realtime_events(events: list[dict[str, Any]], limit: int = 25) -> None:
+    if not events:
+        _ok("No real-time detections recorded yet.")
+        return
+    _section_title("Recent Real-Time Detections")
+    rows = []
+    for event in events[-limit:][::-1]:
+        rows.append(
+            [
+                event.get("detected_at", ""),
+                _badge(event.get("severity", "-"), _SEVERITY_COLOR),
+                event.get("name", ""),
+                event.get("quarantined", 0),
+                ", ".join(event.get("rules", []) or []),
+            ]
+        )
+    _table(["detected", "severity", "file", "quarantined", "rules"], rows, max_cell=40)
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Run (or configure) the real-time file-system protection watcher."""
+    settings = AppSettings().load()
+
+    if getattr(args, "enable", False) or getattr(args, "disable", False):
+        cfg = settings.set_realtime(enabled=bool(args.enable))
+        _ok(f"Real-time protection {'enabled' if cfg['enabled'] else 'disabled'}.")
+        return 0
+
+    if getattr(args, "events", False):
+        events = load_events()
+        if _JSON_MODE:
+            _emit_json({"events": events})
+            return 0
+        _print_realtime_events(events)
+        return 0
+
+    cfg = settings.realtime_config()
+    directories = [Path(d) for d in (args.dir or cfg.get("directories") or [])]
+    watcher = RealtimeWatcher(
+        directories=directories,
+        interval=float(args.interval if args.interval is not None else cfg.get("interval", 3.0)),
+        settle_seconds=float(cfg.get("settle_seconds", 2.0)),
+        auto_quarantine=not args.no_quarantine,
+        scan_existing=bool(args.scan_existing),
+    )
+
+    def handle(event: dict[str, Any]) -> None:
+        append_event(event)
+        if not _JSON_MODE:
+            tag = _style("[threat]", "bold", "red")
+            quarantined = " (quarantined)" if event.get("quarantined") else ""
+            print(f"{tag} {event.get('severity', '').upper()} {event.get('name', '')}{quarantined}", flush=True)
+
+    watcher.on_event = handle
+    watched = ", ".join(str(d) for d in (watcher.directories or [])) or "default download folders"
+
+    if args.once:
+        watcher.poll_once()  # prime
+        events = watcher.poll_once()
+        if _JSON_MODE:
+            _emit_json({"events": events})
+            return 0
+        _ok(f"Single real-time pass complete: {len(events)} detection(s).")
+        return 0
+
+    import threading
+
+    stop_event = threading.Event()
+    _rule("HomeGuard Real-Time Protection")
+    print(_muted(f"Watching: {watched}"))
+    print(_muted("Press Ctrl+C to stop."))
+    try:
+        watcher.run(stop_event)
+    except KeyboardInterrupt:
+        stop_event.set()
+        print()
+        _ok("Real-time protection stopped.")
+    return 0
+
+
+def cmd_update_hashes(args: argparse.Namespace) -> int:
+    """Download/apply a cryptographically-signed malware hash feed."""
+    settings = AppSettings().load()
+    if args.file:
+        result = load_signed_feed_file(args.file)
+        source = f"file {args.file}"
+    else:
+        url = args.url or settings.hash_feed_config().get("url")
+        if not url:
+            print("error: provide --url or --file (or set a feed URL in settings).", file=sys.stderr)
+            return 2
+        result = update_hashes_from_url(url)
+        source = f"url {url}"
+        if result.get("ok"):
+            settings.set_hash_feed(url=url, last_updated=str(result.get("feed_version") or ""), last_status="ok")
+        else:
+            settings.set_hash_feed(last_status=str(result.get("message") or "failed"))
+
+    if _JSON_MODE:
+        _emit_json(result)
+        return 0
+    if not result.get("ok"):
+        print(f"error: signed hash feed rejected ({source}): {result.get('message')}", file=sys.stderr)
+        return 2
+    _ok("Signed hash feed verified and applied.")
+    _panel(
+        "Hash Feed",
+        [
+            ("source", source),
+            ("verified", _badge("yes", {"yes": "green"})),
+            ("feed_version", result.get("feed_version")),
+            ("new_hashes", result.get("added")),
+            ("updated_hashes", result.get("updated")),
+            ("total_hashes", result.get("total")),
+        ],
+        accent="green",
     )
     return 0
 
@@ -437,6 +752,7 @@ def cmd_custom_rules_show(_args: argparse.Namespace) -> int:
     print(f"  risky_ports         : {len(custom['risky_ports'])}")
     print(f"  watch_hostnames     : {len(custom['watch_hostnames'])}")
     print(f"  watch_mac_prefixes  : {len(custom['watch_mac_prefixes'])}")
+    print(f"  malware_hashes      : {len(custom.get('malware_hashes', []))}")
     return 0
 
 
@@ -845,6 +1161,77 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip process, memory, browser download file, and startup persistence endpoint checks",
     )
     scan.set_defaults(func=cmd_scan)
+
+    scan_file = sub.add_parser(
+        "scan-file",
+        help="Scan a single file for malware (hash, content signature, heuristics)",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    scan_file.add_argument("path", help="Path to the file to scan")
+    scan_file.add_argument(
+        "--quarantine",
+        action="store_true",
+        help="Neutralize high-confidence detections into the local quarantine vault",
+    )
+    scan_file.set_defaults(func=cmd_scan_path)
+
+    scan_folder = sub.add_parser(
+        "scan-folder",
+        help="Recursively scan a folder for malware",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    scan_folder.add_argument("path", help="Path to the folder to scan")
+    scan_folder.add_argument(
+        "--quarantine",
+        action="store_true",
+        help="Neutralize high-confidence detections into the local quarantine vault",
+    )
+    scan_folder.set_defaults(func=cmd_scan_path)
+
+    quarantine = sub.add_parser(
+        "quarantine",
+        help="Manage the local malware quarantine vault",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    quarantine_sub = quarantine.add_subparsers(dest="quarantine_command", required=True)
+    q_list = quarantine_sub.add_parser("list", help="List quarantined files", formatter_class=HomeGuardHelpFormatter)
+    q_list.add_argument("--all", action="store_true", help="Include restored and deleted entries")
+    q_list.set_defaults(func=cmd_quarantine_list)
+    q_restore = quarantine_sub.add_parser("restore", help="Restore a quarantined file", formatter_class=HomeGuardHelpFormatter)
+    q_restore.add_argument("entry_id", help="Quarantine entry id (or unique prefix)")
+    q_restore.add_argument("--to", default="", help="Restore to this path instead of the original location")
+    q_restore.add_argument("--overwrite", action="store_true", help="Overwrite if the restore target already exists")
+    q_restore.set_defaults(func=cmd_quarantine_restore)
+    q_delete = quarantine_sub.add_parser("delete", help="Permanently delete a quarantined file", formatter_class=HomeGuardHelpFormatter)
+    q_delete.add_argument("entry_id", help="Quarantine entry id (or unique prefix)")
+    q_delete.set_defaults(func=cmd_quarantine_delete)
+    q_purge = quarantine_sub.add_parser("purge", help="Permanently delete all quarantined files", formatter_class=HomeGuardHelpFormatter)
+    q_purge.add_argument("--yes", action="store_true", help="Confirm permanent deletion of every quarantined file")
+    q_purge.set_defaults(func=cmd_quarantine_purge)
+
+    watch = sub.add_parser(
+        "watch",
+        help="Real-time protection: scan files for malware as they appear or change",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    watch.add_argument("--dir", action="append", default=[], help="Directory to watch (repeatable; default: Downloads)")
+    watch.add_argument("--interval", type=float, default=None, help="Seconds between scan passes (default: 3)")
+    watch.add_argument("--no-quarantine", action="store_true", help="Detect and report only; do not auto-quarantine")
+    watch.add_argument("--scan-existing", action="store_true", help="Scan files already present on the first pass too")
+    watch.add_argument("--once", action="store_true", help="Run a single scan pass and exit (for cron/testing)")
+    watch.add_argument("--events", action="store_true", help="Show recent real-time detections and exit")
+    watch.add_argument("--enable", action="store_true", help="Persist real-time protection as enabled and exit")
+    watch.add_argument("--disable", action="store_true", help="Persist real-time protection as disabled and exit")
+    watch.set_defaults(func=cmd_watch)
+
+    update_hashes = sub.add_parser(
+        "update-hashes",
+        help="Download/apply a cryptographically-signed malware hash feed",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    update_hashes.add_argument("--url", default="", help="HTTPS URL of a signed hash feed (or set one in settings)")
+    update_hashes.add_argument("--file", default="", help="Path to a signed hash feed file (offline / air-gapped)")
+    update_hashes.set_defaults(func=cmd_update_hashes)
 
     analyze = sub.add_parser("analyze", help="Analyze an existing device JSON file", formatter_class=HomeGuardHelpFormatter)
     analyze.add_argument("--input", required=True, help="Device JSON input file")

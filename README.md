@@ -36,6 +36,11 @@ This repo is built as a bounded local discovery and review tool with detection r
 - Active scan checks a bounded set of private/local ports for remote-control, unsafe sharing, camera, debug bridge, and other unusual-service indicators.
 - One-click fix option for local findings: HomeGuard can close or reopen inbound TCP ports on the computer running the app using reversible Windows Firewall rules.
 - Defensive PowerSploit resistance checks: static endpoint artifact detection plus passive Windows privilege-escalation hardening review.
+- On-demand antivirus file/folder scanning of any path, layering exact known-bad SHA-256 hash matches, embedded content signatures, deceptive double-extension detection, and a packed-executable entropy heuristic.
+- Real malware remediation: a local quarantine vault that neutralizes a flagged file (per-entry XOR so the stored copy can't run or re-trigger scanners), removes the live original only after a recoverable copy is verified on disk, and supports full restore and permanent delete.
+- Real-time protection: a background watcher that scans files as they appear or change in watched folders and auto-quarantines high-confidence threats on write.
+- Cryptographically-signed cloud hash feeds: the known-bad hash set can be refreshed from a remote feed whose RSA signature is verified against a bundled public key before anything is trusted (fails closed on tamper).
+- Bring-your-own threat intelligence: known-bad file hashes ship in the security definitions and can be extended through `custom_rules.json`.
 - Unit tests.
 
 
@@ -51,7 +56,7 @@ Users can choose OpenAI, Anthropic, OpenRouter, Gemini, or a custom OpenAI-compa
 
 When a provider is configured, the in-app chat routes through your chosen LLM and the assistant can:
 
-- **Use the engine via tool calls** — the model can read the latest scan, list devices, look up findings, snapshot current network connections, and read/write the local AI memory on its own. Bounded to four tool iterations per turn.
+- **Use the engine via tool calls** — the model can read the latest scan, list devices, look up findings, scan a file or folder for malware (and quarantine high-confidence detections), list the quarantine vault, snapshot current network connections, and read/write the local AI memory on its own. Bounded to four tool iterations per turn.
 - **Train on your network locally** — HomeGuard does not fine-tune cloud LLMs, but it persists a bounded local memory store (notes, device facts, recent scan-trend snapshots) and re-injects it into every chat. The assistant gets steadily smarter about *this* network without anything leaving the box.
 - **See bounded current network traffic** — a connection-summary feed derived from `psutil`/`netstat` (no packet capture) can be attached to chats. External endpoints are hashed in `minimal` share level.
 
@@ -77,6 +82,8 @@ HomeGuard is designed for networks you own or are authorized to assess.
 By default it uses passive discovery. Active probing is opt-in, limited to private/local networks, and bounded by host count, ports, and timeouts. It does not exploit, brute-force, bypass authentication, capture passwords, or alter devices.
 
 CVE, KEV, possible-intrusion, unusual-service, and endpoint findings are indicators for review, not proof of compromise. A home network scan usually cannot prove the exact firmware/software version running on a device, and it is not a replacement for full endpoint protection on the device itself.
+
+File quarantine is reversible by design. Auto-quarantine only fires on the highest-confidence detections (an exact known-bad hash or a critical signature at near-certain confidence); lower-confidence hints are reported, not removed. HomeGuard refuses to quarantine its own files and operating-system critical paths, and every quarantined file can be restored to its exact original bytes.
 
 HomeGuard can only close/reopen ports on the local computer where it is running. For another device on the network, it will guide you to disable the service on that device, block it in the router, or quarantine it in HomeGuard.
 
@@ -319,6 +326,115 @@ devices.csv
 report.md
 manifest.sha256
 ```
+
+## Scan a file or folder for malware
+
+HomeGuard can scan any path on demand, not just the browser Downloads folder.
+Detections are layered highest-confidence first: exact known-bad SHA-256 hash,
+embedded content signatures (EICAR, credential-theft tooling, loader cradles),
+deceptive double extensions, and a packed-executable entropy hint.
+
+```bash
+GNHL --scan-file C:\Users\you\Downloads\setup.exe
+GNHL --scan-folder C:\Users\you\Downloads
+```
+
+Add `--quarantine` to neutralize high-confidence detections (an exact hash
+match, or a critical signature at near-certain confidence) into the local
+quarantine vault. Lower-confidence hints are reported but left in place for you
+to review:
+
+```bash
+GNHL --scan-file C:\Users\you\Downloads\setup.exe --quarantine
+```
+
+## Quarantine vault
+
+Quarantine moves a flagged file into a protected vault, stored neutralized so
+the copy can neither run nor re-trigger antivirus engines. The live original is
+removed only after a recoverable copy is verified on disk, and every action is
+reversible.
+
+```bash
+GNHL --quarantine list                 # show quarantined files
+GNHL quarantine restore <id>           # put a file back (verifies its hash)
+GNHL quarantine restore <id> --to D:\recovered\file.exe
+GNHL quarantine delete <id>            # permanently destroy the vault copy
+GNHL quarantine purge --yes            # permanently destroy all quarantined files
+```
+
+Entry ids accept a unique prefix, so `quarantine restore 1ccb5945` works.
+
+The vault and its index live under the app-data folder:
+
+```text
+%LOCALAPPDATA%\GreyNOC\HomeGuard\quarantine\index.json
+%LOCALAPPDATA%\GreyNOC\HomeGuard\quarantine\blobs\
+```
+
+### Bring your own hash intelligence
+
+Add known-bad file hashes to `custom_rules.json` and HomeGuard will match them
+during file scans:
+
+```json
+{
+  "malware_hashes": [
+    {"sha256": "<64-hex-sha256>", "name": "My IOC", "severity": "critical"}
+  ]
+}
+```
+
+Run `GNHL custom-rules init` to seed a starter file with an example entry.
+
+## Real-time protection
+
+The real-time watcher scans files for malware the moment they appear or change
+in watched folders (Downloads by default) and auto-quarantines high-confidence
+threats on write.
+
+```bash
+GNHL --watch                       # run protection in the foreground (Ctrl+C to stop)
+GNHL watch --dir C:\Users\you\Downloads --dir D:\Incoming
+GNHL watch --once                  # single pass (for cron / scripts)
+GNHL watch --no-quarantine         # detect and report only
+GNHL --watch --events              # show recent real-time detections
+GNHL watch --enable                # persist real-time protection as on
+```
+
+When real-time protection is enabled in settings, the system-tray app starts
+the watcher automatically and pops a notification each time a threat is caught.
+It is a lightweight polling watcher (no kernel driver), with a "settle window"
+so half-written downloads are not scanned mid-flight.
+
+## Signed cloud hash feeds
+
+The known-bad hash set can be refreshed from a remote feed. Feeds are
+**cryptographically signed**: HomeGuard verifies an RSA-PKCS#1v1.5 / SHA-256
+signature against a public key bundled in the binary before trusting a single
+hash, and fails closed if the signature is missing, tampered, or signed by the
+wrong key. The local definitions are never modified unless verification passes.
+
+```bash
+GNHL --update-hashes --url https://feeds.greynoc.example/hashes.json
+GNHL update-hashes --file signed_hashes.json     # offline / air-gapped
+```
+
+A signed feed document is JSON with a base64 `data` payload and a base64
+`signature` over those exact bytes:
+
+```json
+{
+  "key_id": "greynoc-hashfeed-2026",
+  "data": "<base64 of {\"feed_version\": \"...\", \"malware_hashes\": [ ... ]}>",
+  "signature": "<base64 RSA-PKCS#1v1.5 SHA-256 signature over the data bytes>"
+}
+```
+
+Feeds are signed offline with the matching private key, e.g.
+`openssl dgst -sha256 -sign private.pem -out data.sig data.json`. The bundled
+trust anchor in `signed_feed.py` is a development key; replace it with your
+production public key before publishing feeds.
 
 ## Run browser dashboard
 

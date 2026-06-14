@@ -28,6 +28,7 @@ const tabs = {
   protection: $("protectionTab"),
   devices: $("devicesTab"),
   findings: $("findingsTab"),
+  fileScan: $("fileScanTab"),
   history: $("historyTab"),
   schedule: $("scheduleTab"),
   logs: $("logsTab"),
@@ -38,6 +39,7 @@ const pages = {
   protection: $("protectionPage"),
   devices: $("devicesPage"),
   findings: $("findingsPage"),
+  fileScan: $("fileScanPage"),
   history: $("historyPage"),
   schedule: $("schedulePage"),
   logs: $("logsPage"),
@@ -219,7 +221,7 @@ function withoutProgressLines(stdout) {
 async function runCommand(label, fn, options = {}) {
   const showFinalOutput = options.showFinalOutput !== false;
   setBusy(true);
-  setStatus(`${label} running...`);
+  setStatus(`${label} running`);
   try {
     const result = await fn();
     if (showFinalOutput) {
@@ -539,6 +541,10 @@ tabs.findings.addEventListener("click", () => {
   setActiveTab("findings");
   loadFindings();
 });
+tabs.fileScan.addEventListener("click", () => {
+  setActiveTab("fileScan");
+  loadQuarantine();
+});
 tabs.history.addEventListener("click", () => {
   setActiveTab("history");
   loadHistory();
@@ -716,7 +722,7 @@ function renderFindings() {
     const fixBtn = document.createElement("button");
     fixBtn.type = "button";
     fixBtn.className = "action accent";
-    fixBtn.textContent = "Show me how to fix this";
+    fixBtn.textContent = "View fix steps";
     fixBtn.addEventListener("click", () => openPlaybook(finding));
 
     row.appendChild(badge);
@@ -747,13 +753,204 @@ async function loadFindings() {
     cachedFindings = Array.isArray(result.findings) ? result.findings : [];
     if (findingsMetaEl) {
       const when = relativeFindingTime(result.created_at);
-      findingsMetaEl.textContent = `${cachedFindings.length} finding(s) from the latest scan${when ? ` (${when})` : ""}.`;
+      const countLabel = cachedFindings.length === 1 ? "1 finding" : `${cachedFindings.length} findings`;
+      findingsMetaEl.textContent = `${countLabel} from the latest scan${when ? ` (${when})` : ""}.`;
     }
     renderFindings();
   } finally {
     if (findingsRefreshBtn) findingsRefreshBtn.disabled = false;
   }
 }
+
+// --- File scan + quarantine ------------------------------------------------
+
+const fileScanApi = window.homeguard && window.homeguard.fileScan ? window.homeguard.fileScan : null;
+const fileScanResultsEl = $("fileScanResults");
+const fileScanMetaEl = $("fileScanMeta");
+const quarantineListEl = $("quarantineList");
+const quarantineMetaEl = $("quarantineMeta");
+const scanQuarantineToggle = $("scanQuarantineToggle");
+
+function basename(pathStr) {
+  const text = String(pathStr || "");
+  const idx = Math.max(text.lastIndexOf("/"), text.lastIndexOf("\\"));
+  return idx >= 0 ? text.slice(idx + 1) : text;
+}
+
+function renderFileScanResults(payload) {
+  if (!fileScanResultsEl) return;
+  clearChildren(fileScanResultsEl);
+  const findings = Array.isArray(payload.findings) ? payload.findings : [];
+  const actions = Array.isArray(payload.actions) ? payload.actions : [];
+  const quarantinedPaths = new Set(
+    actions.filter((a) => a && a.action === "quarantined").map((a) => String(a.path || "")),
+  );
+  if (!findings.length) {
+    const ok = document.createElement("p");
+    ok.className = "meta";
+    ok.textContent = "No threats detected in the scanned path.";
+    fileScanResultsEl.appendChild(ok);
+    return;
+  }
+  for (const finding of findings) {
+    const evidence = finding.evidence || {};
+    const filePath = String(evidence.path || "");
+    const severity = String(finding.severity || "info").toLowerCase();
+    const row = document.createElement("article");
+    row.className = `finding-row severity-${severity}`;
+
+    const badge = document.createElement("span");
+    badge.className = `finding-severity sev-${severity}`;
+    badge.textContent = severity.toUpperCase();
+
+    const body = document.createElement("div");
+    body.className = "finding-body";
+    const title = document.createElement("p");
+    title.className = "finding-title";
+    title.textContent = String(finding.title || finding.rule_id || "Detection");
+    const sub = document.createElement("p");
+    sub.className = "finding-sub meta";
+    const conf = Number(finding.confidence || 0).toFixed(2);
+    sub.textContent = `${basename(filePath) || "file"} - confidence ${conf} - ${String(finding.rule_id || "")}`;
+    body.appendChild(title);
+    body.appendChild(sub);
+    if (quarantinedPaths.has(filePath)) {
+      const tag = document.createElement("p");
+      tag.className = "finding-patched";
+      tag.textContent = "Quarantined";
+      body.appendChild(tag);
+    }
+
+    row.appendChild(badge);
+    row.appendChild(body);
+    fileScanResultsEl.appendChild(row);
+  }
+}
+
+async function runFileScan(folder) {
+  if (!fileScanApi) {
+    if (fileScanMetaEl) fileScanMetaEl.textContent = "File scan IPC unavailable. Reload the app.";
+    return;
+  }
+  const picked = await fileScanApi.pickTarget({ folder });
+  if (!picked || !picked.ok || !picked.path) {
+    return;
+  }
+  const quarantine = Boolean(scanQuarantineToggle && scanQuarantineToggle.checked);
+  if (fileScanMetaEl) fileScanMetaEl.textContent = `Scanning ${basename(picked.path)}…`;
+  setStatus(`Scanning ${basename(picked.path)}…`);
+  try {
+    const result = await fileScanApi.scan({ path: picked.path, folder, quarantine });
+    if (!result || !result.ok) {
+      if (fileScanMetaEl) fileScanMetaEl.textContent = (result && result.message) || "Scan failed.";
+      return;
+    }
+    renderFileScanResults(result);
+    const count = Array.isArray(result.findings) ? result.findings.length : 0;
+    const quarantined = Array.isArray(result.actions)
+      ? result.actions.filter((a) => a && a.action === "quarantined").length
+      : 0;
+    const scanned = (result.metadata && result.metadata.files_scanned) || 0;
+    const detLabel = count === 1 ? "1 detection" : `${count} detections`;
+    if (fileScanMetaEl) {
+      fileScanMetaEl.textContent = `${scanned} file(s) scanned, ${detLabel}${quarantined ? `, ${quarantined} quarantined` : ""}.`;
+    }
+    setStatus(`Scan complete: ${detLabel}${quarantined ? `, ${quarantined} quarantined` : ""}.`);
+    if (quarantined) loadQuarantine();
+  } catch (error) {
+    if (fileScanMetaEl) fileScanMetaEl.textContent = `Scan failed: ${error.message || error}`;
+  }
+}
+
+function renderQuarantine(entries) {
+  if (!quarantineListEl) return;
+  clearChildren(quarantineListEl);
+  const active = entries.filter((entry) => entry && entry.status === "quarantined");
+  if (!active.length) {
+    const empty = document.createElement("p");
+    empty.className = "meta";
+    empty.textContent = "Quarantine is empty.";
+    quarantineListEl.appendChild(empty);
+    return;
+  }
+  for (const entry of active) {
+    const severity = String(entry.severity || "info").toLowerCase();
+    const row = document.createElement("article");
+    row.className = `finding-row severity-${severity}`;
+
+    const badge = document.createElement("span");
+    badge.className = `finding-severity sev-${severity}`;
+    badge.textContent = severity.toUpperCase();
+
+    const body = document.createElement("div");
+    body.className = "finding-body";
+    const title = document.createElement("p");
+    title.className = "finding-title";
+    title.textContent = String(entry.name || "Quarantined file");
+    const sub = document.createElement("p");
+    sub.className = "finding-sub meta";
+    sub.textContent = `${String(entry.detection_rule || "")} - ${String(entry.quarantined_at || "")}`;
+    body.appendChild(title);
+    body.appendChild(sub);
+
+    const restoreBtn = document.createElement("button");
+    restoreBtn.type = "button";
+    restoreBtn.className = "action secondary";
+    restoreBtn.textContent = "Restore";
+    restoreBtn.addEventListener("click", () => quarantineAction("restore", entry.entry_id));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "action accent";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => quarantineAction("delete", entry.entry_id));
+
+    row.appendChild(badge);
+    row.appendChild(body);
+    row.appendChild(restoreBtn);
+    row.appendChild(deleteBtn);
+    quarantineListEl.appendChild(row);
+  }
+}
+
+async function loadQuarantine() {
+  if (!fileScanApi) return;
+  try {
+    const result = await fileScanApi.quarantineList();
+    const entries = (result && Array.isArray(result.entries)) ? result.entries : [];
+    renderQuarantine(entries);
+    const active = (result && result.stats && result.stats.active) || 0;
+    if (quarantineMetaEl) {
+      quarantineMetaEl.textContent = active
+        ? `${active} file(s) in quarantine.`
+        : "Quarantine is empty.";
+    }
+  } catch (error) {
+    if (quarantineMetaEl) quarantineMetaEl.textContent = `Could not read quarantine: ${error.message || error}`;
+  }
+}
+
+async function quarantineAction(action, entryId) {
+  if (!fileScanApi || !entryId) return;
+  try {
+    const result = action === "restore"
+      ? await fileScanApi.quarantineRestore(entryId, {})
+      : await fileScanApi.quarantineDelete(entryId);
+    if (result && result.ok) {
+      setStatus(result.message || "Done.");
+    } else {
+      setStatus((result && result.message) || "Action failed.");
+    }
+  } catch (error) {
+    setStatus(`Action failed: ${error.message || error}`);
+  } finally {
+    loadQuarantine();
+  }
+}
+
+if ($("scanFileButton")) $("scanFileButton").addEventListener("click", () => runFileScan(false));
+if ($("scanFolderButton")) $("scanFolderButton").addEventListener("click", () => runFileScan(true));
+if ($("quarantineRefresh")) $("quarantineRefresh").addEventListener("click", loadQuarantine);
 
 function showPlaybookStatus(message, kind = "info") {
   if (!playbookDrawerStatus) return;
@@ -833,7 +1030,7 @@ async function openPlaybook(finding) {
   // gate's secret-scanner regex `\btoken\s*=\s*[A-Za-z0-9...]{20,}`.)
   const requestSeq = ++activePlaybookRequestToken;
   activePlaybookFinding = finding;
-  playbookDrawerTitle.textContent = "Loading playbook...";
+  playbookDrawerTitle.textContent = "Loading fix steps";
   playbookDrawerSeverity.textContent = "";
   playbookDrawerSummary.textContent = "";
   clearChildren(playbookDrawerSteps);

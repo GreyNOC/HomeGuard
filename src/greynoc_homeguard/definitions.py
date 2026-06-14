@@ -17,7 +17,7 @@ from .paths import atomic_write_text, definitions_file
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 NVD_CVE_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 DEFINITIONS_SCHEMA_VERSION = "1.0"
-STARTER_VERSION = "2026.05.06.1"
+STARTER_VERSION = "2026.06.13.1"
 
 DEFAULT_RISKY_PORTS = [
     {"port": 21, "service": "FTP", "severity": "medium", "why": "FTP is often unencrypted. Do not expose it unless you know why it is needed."},
@@ -45,6 +45,21 @@ DEFAULT_RISKY_PORTS = [
 ]
 
 DEFAULT_NAME_HINTS = ["router", "camera", "cam", "admin", "default", "tplink", "tp-link", "dlink", "netgear", "printer", "nas", "synology", "qnap", "arlo", "ring"]
+
+# Known-bad file hashes (SHA-256, lower-case). This is the foundation of
+# signature-based antivirus: an exact-content match is the highest-confidence
+# detection there is. The starter set ships the industry-standard EICAR test
+# file hash so the hash detector is verifiable out of the box without any
+# real malware on disk. Real deployments extend this through
+# ``update-definitions`` feeds or a user ``custom_rules.json`` IOC list.
+DEFAULT_MALWARE_HASHES = [
+    {
+        "sha256": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+        "name": "EICAR-STANDARD-ANTIVIRUS-TEST-FILE",
+        "severity": "critical",
+        "why": "Industry-standard antivirus test file. Safe, but proves the hash detector works.",
+    },
+]
 
 DEFAULT_PRODUCT_HINTS = [
     {
@@ -118,6 +133,7 @@ def _default_definitions() -> dict[str, Any]:
         "risky_ports": DEFAULT_RISKY_PORTS,
         "device_name_hints": DEFAULT_NAME_HINTS,
         "product_hints": DEFAULT_PRODUCT_HINTS,
+        "malware_hashes": DEFAULT_MALWARE_HASHES,
         "kev_catalog": [],
         "recent_cves": [],
     }
@@ -251,6 +267,7 @@ class DefinitionManager:
             data["risky_ports"] = defaults["risky_ports"]
             data["device_name_hints"] = defaults["device_name_hints"]
             data["product_hints"] = defaults["product_hints"]
+            data["malware_hashes"] = defaults["malware_hashes"]
             feed_versions["starter"] = STARTER_VERSION
             data["feed_versions"] = feed_versions
             feed_timestamps = dict(data.get("feed_timestamps") or {})
@@ -269,6 +286,76 @@ class DefinitionManager:
     def save(self, data: dict[str, Any]) -> None:
         assert self.path is not None
         atomic_write_text(self.path, json.dumps(data, indent=2, sort_keys=True))
+
+    def merge_malware_hashes(
+        self,
+        rows: Any,
+        *,
+        feed_version: str = "",
+        source: str = "hash_feed",
+    ) -> dict[str, Any]:
+        """Merge known-bad hash rows into the on-disk definitions.
+
+        Deduplicates by SHA-256 (the incoming row wins), records feed
+        provenance, and persists. Used by the signed hash-feed updater so a
+        downloaded, signature-verified feed becomes part of the live
+        definition set. Malformed rows are skipped, not fatal.
+        """
+
+        data = self.load()
+        by_hash: dict[str, dict[str, Any]] = {}
+        for row in data.get("malware_hashes") or []:
+            if isinstance(row, dict):
+                digest = str(row.get("sha256") or "").strip().lower()
+                if digest:
+                    by_hash[digest] = row
+        added = 0
+        updated = 0
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            digest = str(row.get("sha256") or row.get("hash") or "").strip().lower()
+            if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                continue
+            severity = str(row.get("severity") or "high").strip().lower()
+            clean = {
+                "sha256": digest,
+                "name": str(row.get("name") or "Known-bad file hash"),
+                "severity": severity if severity in {"critical", "high", "medium", "low", "info"} else "high",
+                "why": str(row.get("why") or "This file's exact contents match a signed hash-feed entry."),
+                "source": source,
+            }
+            if digest in by_hash:
+                updated += 1
+            else:
+                added += 1
+            by_hash[digest] = clean
+        data["malware_hashes"] = list(by_hash.values())
+
+        resolved_version = str(feed_version or utcnow())
+        feed_versions = dict(data.get("feed_versions") or {})
+        feed_versions[source] = resolved_version
+        data["feed_versions"] = feed_versions
+        feed_timestamps = dict(data.get("feed_timestamps") or {})
+        feed_timestamps[source] = utcnow()
+        data["feed_timestamps"] = feed_timestamps
+        source_status = dict(data.get("source_status") or {})
+        source_status[source] = {
+            "ok": True,
+            "message": f"Merged {added} new and {updated} updated hash signature(s).",
+        }
+        data["source_status"] = source_status
+        sources = list(data.get("sources") or [])
+        if source not in sources:
+            sources.append(source)
+            data["sources"] = sources
+        self.save(data)
+        return {
+            "added": added,
+            "updated": updated,
+            "total": len(by_hash),
+            "feed_version": resolved_version,
+        }
 
     def status(self) -> dict[str, Any]:
         data = self.load()
@@ -534,6 +621,34 @@ def active_scan_ports(
         if 0 < value <= 65535:
             ports.add(value)
     return sorted(ports)
+
+
+def active_malware_hashes(definitions: dict[str, Any] | None = None) -> dict[str, dict[str, str]]:
+    """Return the known-bad SHA-256 set keyed by lower-case hash.
+
+    Sourced from the ``malware_hashes`` definitions list (plus any merged from
+    a user ``custom_rules.json``). Each value carries the human-readable name,
+    severity, and rationale so a hash hit produces a real finding rather than a
+    bare hash string. Malformed rows are skipped rather than aborting a scan.
+    """
+
+    if definitions is None:
+        definitions = DefinitionManager().load()
+    result: dict[str, dict[str, str]] = {}
+    for row in definitions.get("malware_hashes") or []:
+        if not isinstance(row, dict):
+            continue
+        digest = str(row.get("sha256") or row.get("hash") or "").strip().lower()
+        # A SHA-256 is exactly 64 hex characters; anything else is noise.
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            continue
+        severity = str(row.get("severity") or "high").strip().lower()
+        result[digest] = {
+            "name": str(row.get("name") or "Known-bad file hash"),
+            "severity": severity if severity in {"critical", "high", "medium", "low", "info"} else "high",
+            "why": str(row.get("why") or "This file's exact contents match a known-bad signature."),
+        }
+    return result
 
 
 def risky_ports_from_definitions(definitions: dict[str, Any]) -> dict[int, tuple[str, str, str, str]]:
