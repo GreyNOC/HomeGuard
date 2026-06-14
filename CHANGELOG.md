@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Release pipeline
+- The Windows release workflow no longer fails when code signing is unconfigured. It resolves a signing **mode** automatically — SignPath → GreyNOC PFX certificate → unsigned — and ships an unsigned installer + portable EXE with `SHA256SUMS.txt` when no signing is set up, instead of erroring at the certificate step.
+- Added a dormant, gated **SignPath** signing path (free Authenticode signing for open source) that activates once the `SIGNPATH_*` repo variables + the `SIGNPATH_API_TOKEN` secret are configured.
+- Publish step is now idempotent: it refreshes assets on an existing release instead of failing when the release already exists.
+- New `docs/release/SIGNING.md` documents all three signing modes and how to enable free SignPath signing.
+
 ## 1.6.0 - Antivirus: quarantine, on-demand + real-time scanning, signed hash feeds (2026-06-14)
 
 ### Real malware remediation (quarantine vault)

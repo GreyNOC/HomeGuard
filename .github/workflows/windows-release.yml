@@ -1,4 +1,4 @@
-name: Build signed Windows release
+name: Build and publish Windows release
 
 on:
   workflow_dispatch:
@@ -6,11 +6,11 @@ on:
       version:
         description: Release version, without leading v
         required: true
-        default: 1.5.0
+        default: 1.6.0
       tag_name:
         description: Release tag name
         required: true
-        default: v1.5.0
+        default: v1.6.0
   push:
     tags:
       - v*
@@ -24,11 +24,10 @@ defaults:
 
 jobs:
   build-and-publish:
-    name: Build, sign, and publish Windows artifacts
+    name: Build and publish Windows artifacts
     runs-on: windows-latest
 
     env:
-      HOMEGUARD_REQUIRE_SIGNING: "1"
       HOMEGUARD_SIGN_CERT_PATH: ${{ github.workspace }}\GreyNOC-CodeSigning.pfx
       HOMEGUARD_SIGN_CERT_PASSWORD: ${{ secrets.HOMEGUARD_SIGN_CERT_PASSWORD }}
 
@@ -60,6 +59,30 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag_name=$tagName" >> $env:GITHUB_OUTPUT
 
+      # Decide how (or whether) to sign. Precedence: SignPath (free for OSS) ->
+      # GreyNOC PFX certificate -> unsigned fallback. The release NEVER fails
+      # just because signing is not configured; it ships unsigned with
+      # checksums instead. See docs/release/SIGNING.md.
+      - name: Resolve signing mode
+        id: signing
+        env:
+          SIGN_CERT_BASE64: ${{ secrets.HOMEGUARD_SIGN_CERT_BASE64 }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORG: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if ($env:SIGNPATH_API_TOKEN -and $env:SIGNPATH_ORG) {
+            $mode = "signpath"
+          } elseif ($env:SIGN_CERT_BASE64 -and $env:HOMEGUARD_SIGN_CERT_PASSWORD) {
+            $mode = "pfx"
+          } else {
+            $mode = "unsigned"
+          }
+          Write-Host "Signing mode: $mode"
+          if ($mode -eq "unsigned") {
+            Write-Warning "No code-signing configured - building an UNSIGNED release. Windows SmartScreen will warn users on download. See docs/release/SIGNING.md to enable free SignPath signing."
+          }
+          "mode=$mode" >> $env:GITHUB_OUTPUT
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -75,15 +98,10 @@ jobs:
         run: choco install innosetup --yes --no-progress
 
       - name: Restore signing certificate
+        if: steps.signing.outputs.mode == 'pfx'
         env:
           SIGN_CERT_BASE64: ${{ secrets.HOMEGUARD_SIGN_CERT_BASE64 }}
         run: |
-          if (-not $env:SIGN_CERT_BASE64) {
-            throw "Missing HOMEGUARD_SIGN_CERT_BASE64 repository secret. Store the GreyNOC PFX as base64."
-          }
-          if (-not $env:HOMEGUARD_SIGN_CERT_PASSWORD) {
-            throw "Missing HOMEGUARD_SIGN_CERT_PASSWORD repository secret."
-          }
           [IO.File]::WriteAllBytes($env:HOMEGUARD_SIGN_CERT_PATH, [Convert]::FromBase64String($env:SIGN_CERT_BASE64))
 
       - name: Install dependencies
@@ -99,7 +117,8 @@ jobs:
           npm audit --audit-level=high
           if (Test-Path electron\smoke.js) { npm run smoke }
 
-      - name: Build signed installer and portable EXE
+      - name: Build signed installer and portable EXE (certificate)
+        if: steps.signing.outputs.mode == 'pfx'
         run: |
           powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version "${{ steps.meta.outputs.version }}" -ExpectedPublisher GreyNOC
           $portable = Get-ChildItem -Path dist\electron -Filter "HomeGuard-Portable-v${{ steps.meta.outputs.version }}*.exe" -File | Select-Object -First 1
@@ -108,6 +127,55 @@ jobs:
           }
           powershell -NoProfile -File scripts\sign_windows_artifact.ps1 -Path $portable.FullName -ExpectedPublisher GreyNOC
           powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path $portable.FullName -ExpectedPublisher GreyNOC
+
+      - name: Build unsigned installer and portable EXE
+        if: steps.signing.outputs.mode != 'pfx'
+        run: |
+          powershell -NoProfile -File scripts\build_windows_installer.ps1 -Version "${{ steps.meta.outputs.version }}" -ExpectedPublisher GreyNOC -Unsigned
+          $portable = Get-ChildItem -Path dist\electron -Filter "HomeGuard-Portable-v${{ steps.meta.outputs.version }}*.exe" -File | Select-Object -First 1
+          if (-not $portable) {
+            throw "Portable EXE was not produced."
+          }
+
+      # --- SignPath (https://signpath.io) Authenticode signing. DORMANT until
+      #     you connect SignPath and set the repo variables SIGNPATH_ORGANIZATION_ID,
+      #     SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG plus the secret
+      #     SIGNPATH_API_TOKEN. While unset, mode is never 'signpath' and every
+      #     step below is skipped, so it cannot affect the unsigned/PFX paths.
+      #     Validate this path on its first real run (see docs/release/SIGNING.md). ---
+      - name: Stage unsigned artifacts for SignPath
+        if: steps.signing.outputs.mode == 'signpath'
+        id: signpath_upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeguard-unsigned
+          path: |
+            dist/installer/HomeGuard-Setup-v${{ steps.meta.outputs.version }}.exe
+            dist/electron/HomeGuard-Portable-v${{ steps.meta.outputs.version }}*.exe
+
+      - name: Sign with SignPath
+        if: steps.signing.outputs.mode == 'signpath'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.signpath_upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist/signed
+
+      - name: Promote SignPath-signed artifacts
+        if: steps.signing.outputs.mode == 'signpath'
+        run: |
+          $version = "${{ steps.meta.outputs.version }}"
+          $signedInstaller = Get-ChildItem -Path dist/signed -Recurse -Filter "HomeGuard-Setup-v$version.exe" -File | Select-Object -First 1
+          $signedPortable = Get-ChildItem -Path dist/signed -Recurse -Filter "HomeGuard-Portable-v$version*.exe" -File | Select-Object -First 1
+          if (-not $signedInstaller -or -not $signedPortable) {
+            throw "SignPath did not return both signed artifacts under dist/signed."
+          }
+          Copy-Item $signedInstaller.FullName "dist\installer\$($signedInstaller.Name)" -Force
+          Copy-Item $signedPortable.FullName "dist\electron\$($signedPortable.Name)" -Force
 
       - name: Prepare release assets
         id: assets
@@ -128,15 +196,23 @@ jobs:
         run: |
           $tag = "${{ steps.meta.outputs.tag_name }}"
           $version = "${{ steps.meta.outputs.version }}"
+          $mode = "${{ steps.signing.outputs.mode }}"
           git fetch --tags
           if (-not (git tag --list $tag)) {
             git tag $tag
             git push origin $tag
           }
-          gh release create $tag `
-            "${{ steps.assets.outputs.installer }}" `
-            "${{ steps.assets.outputs.portable }}" `
-            "${{ steps.assets.outputs.checksums }}" `
-            --title "HomeGuard v$version" `
-            --notes "Signed Windows release for HomeGuard v$version.`n`nAssets:`n- HomeGuard-Setup-v$version.exe signed installer`n- HomeGuard-Portable-v$version.exe portable executable`n- SHA256SUMS.txt checksums" `
-            --verify-tag
+          switch ($mode) {
+            "signpath" { $signingLine = "Signed with SignPath Authenticode signing." }
+            "pfx" { $signingLine = "Signed with the GreyNOC code-signing certificate (Authenticode)." }
+            default { $signingLine = "UNSIGNED build - Windows SmartScreen may warn on first run. Verify the SHA-256 checksums below before running." }
+          }
+          $notes = "Windows release for HomeGuard v$version.`n`n$signingLine`n`nAssets:`n- HomeGuard-Setup-v$version.exe installer`n- HomeGuard-Portable-v$version.exe portable executable`n- SHA256SUMS.txt checksums"
+          $assets = @("${{ steps.assets.outputs.installer }}", "${{ steps.assets.outputs.portable }}", "${{ steps.assets.outputs.checksums }}")
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; uploading/refreshing assets."
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag @assets --title "HomeGuard v$version" --notes $notes --verify-tag
+          }
