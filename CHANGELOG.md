@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.6.0 - Antivirus: quarantine, on-demand + real-time scanning, signed hash feeds (2026-06-14)
+
+### Real malware remediation (quarantine vault)
+- New `quarantine` module: a file-backed vault under `<appdata>/quarantine` that turns the endpoint scanner from detect-and-report into detect-and-act.
+- Quarantine neutralizes a flagged file (per-entry random XOR key) so the stored copy can neither execute nor re-trigger this scanner / another AV watching the folder, and removes the live original **only after** a recoverable copy is verified on disk — a crash mid-quarantine never leaves the machine with neither the file nor a backup.
+- Fully reversible: `restore` rebuilds the exact original bytes (verified against the SHA-256 recorded at quarantine time) and `delete` / `purge` permanently destroy vault copies. Atomic index + blob writes via new `atomic_write_bytes`.
+- Self-protection: refuses to quarantine HomeGuard's own files, operating-system critical paths (System32, /usr, /bin, …), directories, and files above a 2 GiB cap.
+
+### On-demand file/folder scanning + hash detection
+- New `scan_file` / `scan_path` in `virus_scanner`: scan any file or directory tree, not just browser Downloads.
+- Hash-based detection — the foundation of signature antivirus — matches a file's exact SHA-256 against a known-bad set. Starter definitions ship the EICAR test hash so the detector is verifiable out of the box; the set refreshes through the bundled-definitions migration and can be extended via `custom_rules.json`.
+- Added a packed/encrypted-executable Shannon-entropy heuristic (PE-gated, low severity) alongside the existing content signatures and deceptive double-extension check.
+- New `remediation` module couples detections to the vault with a conservative auto-quarantine bar: only exact known-bad hashes or critical signatures at ≥0.9 confidence are neutralized automatically; weaker hints are reported for manual review.
+
+### CLI
+- `GNHL --scan-file <path>` / `GNHL --scan-folder <path>` (with `--quarantine`).
+- `GNHL --quarantine list` and `GNHL quarantine restore|delete|purge` (entry ids accept a unique prefix).
+- `custom-rules show` now reports the custom `malware_hashes` count.
+
+### Real-time protection (on-write scanning)
+- New `realtime` module: a dependency-free polling watcher (`RealtimeWatcher`) that scans files as they appear or change in watched folders and auto-quarantines high-confidence threats through the same remediation bar. A "settle window" avoids scanning half-written downloads; priming avoids a mass-scan of pre-existing files when protection is first enabled.
+- Persisted, capped event log of caught threats (`realtime_events.json`) for a "recent detections" view.
+- CLI `GNHL watch` (`--once`, `--dir`, `--interval`, `--no-quarantine`, `--scan-existing`, `--events`, `--enable`/`--disable`).
+- System-tray integration: a "Real-time protection" toggle that starts/stops the watcher thread and notifies on each catch.
+- Settings: persistent `realtime` config block (enabled, directories, interval, settle, auto-quarantine).
+
+### Signed cloud hash feeds
+- New `signed_feed` module: refresh the known-bad hash set from a remote feed, verified with **RSA PKCS#1 v1.5 / SHA-256 implemented in pure stdlib** (no new runtime dependency) against a bundled public key. Verification fails closed — an unsigned, tampered, wrong-key, or oversized feed is rejected and local definitions are left untouched.
+- `DefinitionManager.merge_malware_hashes` merges a verified feed (dedup by SHA-256) and records feed provenance in `feed_versions`/`source_status`.
+- CLI `GNHL update-hashes --url <https-url>` / `--file <path>` (offline). Settings: persistent `hash_feed` config block.
+
+### AI assistant
+- New engine tools `homeguard_scan_path` (scan + optional quarantine) and `homeguard_list_quarantine`, both honoring the active share level (file paths reduced to names unless `full`).
+
+### Tests
+- New `tests/test_quarantine.py`, `tests/test_ondemand_scan.py`, `tests/test_realtime.py`, and `tests/test_signed_feed.py` (quarantine round trip, hash/content/entropy detection, auto-remediation bar, self-protection, real-time detect/quarantine/dedup/settle, RSA verify valid/tampered/wrong-key/fail-closed) plus CLI and AI-tool coverage. Tests use a Defender-safe internal marker rather than writing EICAR to disk.
+
 ## 1.5.0 - Identity, Playbooks, and Conversational UI Release
 
 ### Device identity resolution

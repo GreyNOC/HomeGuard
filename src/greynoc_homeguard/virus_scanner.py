@@ -12,6 +12,7 @@ import csv
 import ctypes
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -123,6 +124,23 @@ TEXT_LIKE_SUFFIXES = {
 }
 
 ARCHIVE_SUFFIXES = {".7z", ".cab", ".gz", ".rar", ".tar", ".zip"}
+
+# Native executable image suffixes. The entropy heuristic only fires on these
+# (and only when the file actually starts with the PE "MZ" magic) so the high
+# false-positive risk of "this file looks packed" stays scoped to real
+# Windows binaries rather than every compressed asset on disk.
+EXECUTABLE_BINARY_SUFFIXES = {".exe", ".dll", ".scr", ".sys", ".com", ".cpl", ".ocx", ".efi"}
+
+# Shannon entropy at/above this (out of 8.0) means the bytes are close to
+# random — the signature of packing or encryption. Legitimate installers are
+# often packed too, so this is a low-severity hint, never an auto-remediation
+# trigger.
+ENTROPY_PACKED_THRESHOLD = 7.2
+ENTROPY_SAMPLE_BYTES = 256 * 1024
+
+# On-demand scans inspect more of each file than the passive download sweep,
+# since the user explicitly pointed HomeGuard at the target.
+ONDEMAND_MAX_BYTES_PER_FILE = 8 * 1024 * 1024
 
 DOUBLE_EXTENSION_RE = re.compile(
     r"\.(?:doc|docx|htm|html|jpg|jpeg|pdf|png|rtf|txt|xls|xlsx)\.(?:bat|cmd|com|exe|hta|js|jse|lnk|ps1|scr|vbe|vbs|wsf)$",
@@ -950,3 +968,284 @@ def run_endpoint_malware_scan(
     if progress:
         progress(f"Endpoint scan: complete with {len(all_findings)} endpoint finding(s)")
     return EndpointScanResult(findings=all_findings, metadata=metadata)
+
+
+# ---------------------------------------------------------------------------
+# On-demand file/folder scanning
+#
+# The download sweep above only ever looks at the browser Downloads folder.
+# A real antivirus must also let the user point it at *any* file or folder and
+# get back actionable findings — including exact-content hash matches, the
+# highest-confidence signal an AV has. These functions power `scan-file` /
+# `scan-folder` and the AI `homeguard_scan_path` tool, and produce findings
+# whose evidence carries the absolute path so the remediation layer can act.
+# ---------------------------------------------------------------------------
+
+
+def shannon_entropy(data: bytes) -> float:
+    """Shannon entropy of ``data`` in bits/byte (0.0 .. 8.0)."""
+    if not data:
+        return 0.0
+    counts = [0] * 256
+    for byte in data:
+        counts[byte] += 1
+    length = len(data)
+    entropy = 0.0
+    for count in counts:
+        if count:
+            probability = count / length
+            entropy -= probability * math.log2(probability)
+    return entropy
+
+
+def sha256_file(path: Path) -> str:
+    """Full-file SHA-256 (streamed). Empty string on read error.
+
+    Unlike :func:`_sha256` this hashes the *entire* file with no byte cap so
+    the digest can be matched against a known-bad hash set exactly.
+    """
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def _malware_hash_set(malware_hashes: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+    if malware_hashes is not None:
+        return malware_hashes
+    try:
+        from .definitions import active_malware_hashes
+
+        return active_malware_hashes()
+    except Exception:  # pragma: no cover - defensive
+        return {}
+
+
+def scan_file(
+    path: str | Path,
+    *,
+    malware_hashes: dict[str, dict[str, Any]] | None = None,
+    max_bytes_per_file: int = ONDEMAND_MAX_BYTES_PER_FILE,
+    compute_hash: bool = True,
+) -> list[Finding]:
+    """Scan a single file and return findings.
+
+    Layers, highest-confidence first: known-bad SHA-256 match, embedded
+    content signatures (EICAR, credential-theft tooling, loader cradles),
+    deceptive double extensions, and a packed-executable entropy hint.
+    Findings carry the absolute ``path`` in evidence so remediation can act.
+    """
+    target = Path(path)
+    findings: list[Finding] = []
+    stat = _safe_stat(target)
+    if not stat or not target.is_file():
+        return findings
+    # Never flag HomeGuard's own modules/binary — they carry every signature
+    # as literal text and would self-trigger.
+    if _path_within(target, _homeguard_own_paths()):
+        return findings
+
+    suffix = target.suffix.lower()
+    evidence = _file_evidence(target, source="on_demand_scanner")
+    evidence["path"] = str(target)
+
+    hash_set = _malware_hash_set(malware_hashes) if compute_hash else {}
+    digest = sha256_file(target) if (compute_hash and stat.st_size <= max(max_bytes_per_file, 512 * 1024 * 1024)) else ""
+    if digest:
+        evidence["sha256"] = digest
+        match = hash_set.get(digest)
+        if match:
+            severity = str(match.get("severity") or "high")
+            findings.append(
+                _finding(
+                    rule_id="endpoint_known_malware_hash",
+                    title=f"Known-bad file hash: {match.get('name') or target.name}",
+                    severity=severity,
+                    confidence=0.99,
+                    category="endpoint_file_signature",
+                    plain_english=(
+                        f"{target.name} matches a known-bad file signature by exact content hash. "
+                        f"{match.get('why') or 'This file is on HomeGuard’s known-malware list.'}"
+                    ),
+                    recommended_actions=[
+                        "Quarantine or delete this file now.",
+                        "Run a full system antivirus scan; a known-bad file rarely arrives alone.",
+                        "Review how it reached this machine (downloads, email, USB) to close the gap.",
+                    ],
+                    evidence={**evidence, "matched_name": str(match.get("name") or ""), "detection": "sha256_match"},
+                )
+            )
+
+    sample, truncated = _read_scan_sample(target, max_bytes=max_bytes_per_file)
+    if truncated:
+        evidence["sample_truncated"] = True
+    if sample:
+        matches_for_file = 0
+        for pattern, label, severity, confidence in FILE_CONTENT_SIGNATURES:
+            if not pattern.search(sample):
+                continue
+            metadata = _abuse_metadata(label)
+            findings.append(
+                _finding(
+                    rule_id="endpoint_internal_file_signature",
+                    title=f"Suspicious file content: {label}",
+                    severity=str(metadata.get("severity") or severity),
+                    confidence=float(metadata.get("confidence") or confidence),
+                    category=_signature_category(metadata, "endpoint_file_signature"),
+                    plain_english=_signature_plain_english(
+                        metadata,
+                        (
+                            f"HomeGuard's scanner found {label} inside {target.name}. "
+                            "This can indicate malware, a loader script, or a security test file."
+                        ),
+                    ),
+                    recommended_actions=_signature_actions(
+                        metadata,
+                        [
+                            "Do not run or open this file.",
+                            "Quarantine or delete it if it is not a deliberate security test.",
+                            "If the file was already opened, review running processes and startup entries.",
+                        ],
+                    ),
+                    evidence={**evidence, "matched_artifact": label, **_signature_evidence(metadata)},
+                )
+            )
+            matches_for_file += 1
+            if matches_for_file >= 3:
+                break
+
+    if DOUBLE_EXTENSION_RE.search(target.name):
+        findings.append(
+            _finding(
+                rule_id="endpoint_deceptive_double_extension",
+                title=f"Deceptive double extension: {target.name}",
+                severity="high",
+                confidence=0.7,
+                category="endpoint_file_signature",
+                plain_english=(
+                    f"{target.name} looks like a document or image but ends with an executable/script extension. "
+                    "Malware commonly uses this trick to make payloads look safe."
+                ),
+                recommended_actions=[
+                    "Do not open this file.",
+                    "Quarantine or delete it unless you can verify exactly where it came from.",
+                    "Review recent downloads and email attachments around the same time.",
+                ],
+                evidence=evidence,
+            )
+        )
+
+    if sample[:2] == b"MZ" and suffix in EXECUTABLE_BINARY_SUFFIXES:
+        entropy = shannon_entropy(sample[:ENTROPY_SAMPLE_BYTES])
+        if entropy >= ENTROPY_PACKED_THRESHOLD:
+            findings.append(
+                _finding(
+                    rule_id="endpoint_high_entropy_executable",
+                    title=f"Packed or encrypted executable: {target.name}",
+                    severity="low",
+                    confidence=0.35,
+                    category="endpoint_heuristic",
+                    plain_english=(
+                        f"{target.name} is an executable whose contents look packed or encrypted "
+                        f"(entropy {entropy:.2f}/8.0). Many legitimate installers are packed too, so this "
+                        "is only a hint — treat it as suspicious mainly if you did not expect this program."
+                    ),
+                    recommended_actions=[
+                        "Only run this program if you trust its source and expected to download it.",
+                        "Scan it with a second antivirus engine if you are unsure.",
+                        "Quarantine it if you cannot account for where it came from.",
+                    ],
+                    evidence={**evidence, "entropy": round(entropy, 3), "heuristic": "high_entropy_pe"},
+                )
+            )
+
+    return findings
+
+
+def scan_path(
+    target: str | Path,
+    *,
+    malware_hashes: dict[str, dict[str, Any]] | None = None,
+    max_files: int = 5000,
+    max_bytes_per_file: int = ONDEMAND_MAX_BYTES_PER_FILE,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[list[Finding], dict[str, Any]]:
+    """Scan an arbitrary file or directory tree on demand.
+
+    Returns ``(findings, metadata)``. Directory walks are bounded by
+    ``max_files`` and skip well-known noise directories. Malware-hash lookups
+    are resolved once up front so a folder scan does not reload definitions
+    per file.
+    """
+    root = Path(target)
+    resolved_hashes = _malware_hash_set(malware_hashes)
+    findings: list[Finding] = []
+    files_scanned = 0
+    files_skipped = 0
+    truncated = False
+
+    if not root.exists():
+        return findings, {
+            "scan_target": str(root),
+            "target_exists": False,
+            "files_scanned": 0,
+            "hash_signatures": len(resolved_hashes),
+        }
+
+    if root.is_file():
+        targets: list[Path] = [root]
+    else:
+        targets = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name.lower() not in {"$recycle.bin", "node_modules", ".git", "__pycache__"}
+            ]
+            base = Path(dirpath)
+            for name in filenames:
+                targets.append(base / name)
+                if len(targets) >= max_files:
+                    truncated = True
+                    break
+            if truncated:
+                break
+
+    total = len(targets)
+    for index, file_path in enumerate(targets, start=1):
+        if progress and (index == 1 or index % 100 == 0 or index == total):
+            progress(f"On-demand scan: inspecting file {index}/{total}")
+        try:
+            file_findings = scan_file(
+                file_path,
+                malware_hashes=resolved_hashes,
+                max_bytes_per_file=max_bytes_per_file,
+            )
+        except Exception as exc:  # pragma: no cover - defensive against one bad file
+            LOG.debug("scan_file failed for %s: %s", file_path, exc)
+            files_skipped += 1
+            continue
+        files_scanned += 1
+        findings.extend(file_findings)
+
+    metadata = {
+        "scanner": "GreyNOC On-Demand File Scanner",
+        "scan_target": str(root),
+        "target_exists": True,
+        "target_is_dir": root.is_dir(),
+        "files_scanned": files_scanned,
+        "files_skipped": files_skipped,
+        "files_truncated_at_limit": truncated,
+        "max_files": max_files,
+        "hash_signatures": len(resolved_hashes),
+        "content_signatures": len(FILE_CONTENT_SIGNATURES),
+        "findings_emitted": len(findings),
+    }
+    return findings, metadata

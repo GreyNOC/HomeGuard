@@ -39,6 +39,18 @@ class AppSettings:
                 "active_scan": False,
                 "probe_all": False,
             },
+            "realtime": {
+                "enabled": False,
+                "directories": [],
+                "interval": 3.0,
+                "settle_seconds": 2.0,
+                "auto_quarantine": True,
+            },
+            "hash_feed": {
+                "url": "",
+                "last_updated": "",
+                "last_status": "",
+            },
             "ignored_findings": {},
         }
 
@@ -64,6 +76,12 @@ class AppSettings:
         )
         self.data["onboarding"] = onboarding
         self.data["scan_defaults"] = scan_defaults
+        realtime = dict(defaults["realtime"])
+        realtime.update(loaded.get("realtime") if isinstance(loaded.get("realtime"), dict) else {})
+        self.data["realtime"] = realtime
+        hash_feed = dict(defaults["hash_feed"])
+        hash_feed.update(loaded.get("hash_feed") if isinstance(loaded.get("hash_feed"), dict) else {})
+        self.data["hash_feed"] = hash_feed
         ignored = loaded.get("ignored_findings") if isinstance(loaded.get("ignored_findings"), dict) else {}
         self.data["ignored_findings"] = ignored
         return self
@@ -105,6 +123,61 @@ class AppSettings:
             "probe_all": bool(probe_all),
         }
         self.save()
+
+    def realtime_config(self) -> dict[str, Any]:
+        cfg = self.data.get("realtime") if isinstance(self.data.get("realtime"), dict) else {}
+        directories = cfg.get("directories")
+        return {
+            "enabled": bool(cfg.get("enabled", False)),
+            "directories": [str(item) for item in directories] if isinstance(directories, list) else [],
+            "interval": float(cfg.get("interval", 3.0) or 3.0),
+            "settle_seconds": float(cfg.get("settle_seconds", 2.0) or 2.0),
+            "auto_quarantine": bool(cfg.get("auto_quarantine", True)),
+        }
+
+    def set_realtime(
+        self,
+        *,
+        enabled: bool | None = None,
+        directories: list[str] | None = None,
+        interval: float | None = None,
+        settle_seconds: float | None = None,
+        auto_quarantine: bool | None = None,
+    ) -> dict[str, Any]:
+        cfg = self.realtime_config()
+        if enabled is not None:
+            cfg["enabled"] = bool(enabled)
+        if directories is not None:
+            cfg["directories"] = [str(item) for item in directories]
+        if interval is not None:
+            cfg["interval"] = float(interval)
+        if settle_seconds is not None:
+            cfg["settle_seconds"] = float(settle_seconds)
+        if auto_quarantine is not None:
+            cfg["auto_quarantine"] = bool(auto_quarantine)
+        self.data["realtime"] = cfg
+        self.save()
+        return cfg
+
+    def hash_feed_config(self) -> dict[str, str]:
+        cfg = self.data.get("hash_feed") if isinstance(self.data.get("hash_feed"), dict) else {}
+        return {
+            "url": str(cfg.get("url", "") or ""),
+            "last_updated": str(cfg.get("last_updated", "") or ""),
+            "last_status": str(cfg.get("last_status", "") or ""),
+        }
+
+    def set_hash_feed(self, *, url: str | None = None, last_updated: str | None = None, last_status: str | None = None) -> dict[str, str]:
+        cfg = self.hash_feed_config()
+        if url is not None:
+            cfg["url"] = str(url)
+        if last_updated is not None:
+            cfg["last_updated"] = str(last_updated)
+        if last_status is not None:
+            cfg["last_status"] = str(last_status)
+        self.data["hash_feed"] = cfg
+        self.save()
+        return cfg
 
     def ignored_finding_ids(self) -> set[str]:
         ignored = self.data.get("ignored_findings") if isinstance(self.data.get("ignored_findings"), dict) else {}

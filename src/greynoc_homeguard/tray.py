@@ -258,7 +258,65 @@ def run_tray() -> int:
         stop_event.set()
         icon.stop()
 
+    # Real-time protection: a polling watcher that scans new/changed files in
+    # the watched folders and auto-quarantines high-confidence threats. Its
+    # menu item toggles the persisted setting; the watcher thread starts/stops
+    # to match.
+    from .settings import AppSettings
+
+    watcher_state: dict[str, object] = {"thread": None}
+
+    def realtime_enabled() -> bool:
+        return bool(AppSettings().load().realtime_config().get("enabled"))
+
+    def is_realtime_on(_item) -> bool:
+        return realtime_enabled()
+
+    def start_watcher(icon) -> None:
+        if watcher_state.get("thread") is not None:
+            return
+        try:
+            from .realtime import RealtimeWatcher, append_event
+
+            cfg = AppSettings().load().realtime_config()
+
+            def on_event(event: dict) -> None:
+                append_event(event)
+                notify(
+                    icon,
+                    "GreyNOC real-time protection",
+                    f"{str(event.get('severity', '')).upper()} threat caught: {event.get('name', '')}"
+                    + (" (quarantined)" if event.get("quarantined") else ""),
+                )
+
+            watcher = RealtimeWatcher(
+                directories=[__import__("pathlib").Path(d) for d in cfg.get("directories", [])],
+                interval=float(cfg.get("interval", 3.0)),
+                settle_seconds=float(cfg.get("settle_seconds", 2.0)),
+                auto_quarantine=bool(cfg.get("auto_quarantine", True)),
+                on_event=on_event,
+            )
+            thread = threading.Thread(target=watcher.run, args=(stop_event,), name="HomeGuardWatcher", daemon=True)
+            thread.start()
+            watcher_state["thread"] = thread
+            LOG.info("Real-time protection watcher started from tray.")
+        except Exception as exc:  # pragma: no cover - defensive
+            LOG.warning("Could not start real-time watcher: %s", exc)
+
+    def on_toggle_realtime(icon, _item) -> None:
+        settings = AppSettings().load()
+        new_value = not settings.realtime_config().get("enabled")
+        settings.set_realtime(enabled=new_value)
+        if new_value:
+            start_watcher(icon)
+            notify(icon, "GreyNOC", "Real-time protection enabled.")
+        else:
+            notify(icon, "GreyNOC", "Real-time protection will stop on next exit.")
+        icon.update_menu()
+
     def monitor_loop(icon) -> None:
+        if realtime_enabled():
+            start_watcher(icon)
         while not stop_event.is_set():
             cfg = schedule_manager.load()
             if cfg.background_monitor and schedule_manager.is_due():
@@ -274,6 +332,11 @@ def run_tray() -> int:
             "Background monitor",
             on_toggle_monitor,
             checked=is_monitor_on,
+        ),
+        pystray.MenuItem(
+            "Real-time protection",
+            on_toggle_realtime,
+            checked=is_realtime_on,
         ),
         pystray.MenuItem("Exit", on_exit),
     )

@@ -63,6 +63,14 @@ def example_payload() -> dict[str, Any]:
                 "why": "Recalled IoT vendor; replace any device matching this OUI.",
             }
         ],
+        "malware_hashes": [
+            {
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "name": "Example known-bad file",
+                "severity": "high",
+                "why": "Replace with a real SHA-256 of a file you know is malicious.",
+            }
+        ],
     }
 
 
@@ -124,6 +132,20 @@ def _validate_mac_prefix(row: Any) -> dict[str, Any] | None:
     }
 
 
+def _validate_hash(row: Any) -> dict[str, Any] | None:
+    if not isinstance(row, dict):
+        return None
+    digest = str(row.get("sha256") or row.get("hash") or "").strip().lower()
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        return None
+    return {
+        "sha256": digest,
+        "name": str(row.get("name") or "User-defined known-bad file"),
+        "severity": _normalize_severity(row.get("severity"), default="high"),
+        "why": str(row.get("why") or "File contents matched a custom hash IOC from your local rules."),
+    }
+
+
 def load_custom_rules(path: Path | None = None) -> dict[str, Any]:
     """Load and validate the user's custom rules. Always returns a dict.
 
@@ -137,6 +159,7 @@ def load_custom_rules(path: Path | None = None) -> dict[str, Any]:
         "risky_ports": [],
         "watch_hostnames": [],
         "watch_mac_prefixes": [],
+        "malware_hashes": [],
     }
     if not target.exists():
         return payload
@@ -160,6 +183,10 @@ def load_custom_rules(path: Path | None = None) -> dict[str, Any]:
         clean = _validate_mac_prefix(row)
         if clean is not None:
             payload["watch_mac_prefixes"].append(clean)
+    for row in raw.get("malware_hashes") or []:
+        clean = _validate_hash(row)
+        if clean is not None:
+            payload["malware_hashes"].append(clean)
     return payload
 
 
@@ -170,6 +197,7 @@ def has_any_rules(custom: dict[str, Any] | None) -> bool:
         custom.get("risky_ports")
         or custom.get("watch_hostnames")
         or custom.get("watch_mac_prefixes")
+        or custom.get("malware_hashes")
     )
 
 
@@ -195,6 +223,9 @@ def apply_to_definitions(
         definitions["custom_watch_hostnames"] = list(custom["watch_hostnames"])
     if custom and custom.get("watch_mac_prefixes"):
         definitions["custom_watch_mac_prefixes"] = list(custom["watch_mac_prefixes"])
+    if custom and custom.get("malware_hashes"):
+        existing_hashes = list(definitions.get("malware_hashes") or [])
+        definitions["malware_hashes"] = existing_hashes + list(custom["malware_hashes"])
     return definitions
 
 
