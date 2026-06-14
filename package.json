@@ -14,7 +14,7 @@
     "android:aab": "bash scripts/compile_android.sh aab",
     "cli": "node scripts/cli.js",
     "electron": "electron .",
-    "electron:dist": "electron-builder --win dir --config electron-builder.json",
+    "electron:dist": "electron-builder --win --config electron-builder.json",
     "start": "electron .",
     "smoke": "node electron/smoke.js",
     "test": "python -m unittest discover -s tests -v",

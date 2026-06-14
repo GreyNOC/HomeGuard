@@ -1,7 +1,7 @@
 {
   "appId": "com.greynoc.homeguard",
   "productName": "GreyNOC HomeGuard",
-  "artifactName": "${productName}-Portable-v${version}.${ext}",
+  "artifactName": "HomeGuard-Portable-v${version}.${ext}",
   "asar": false,
   "npmRebuild": false,
   "directories": {

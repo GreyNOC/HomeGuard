@@ -48,6 +48,12 @@ if (-not $Unsigned) {
     $buildArgs += "--require-signing"
 }
 python @buildArgs
+if ($LASTEXITCODE -ne 0) {
+    # A native command's non-zero exit does not throw on its own, so check it
+    # explicitly - otherwise a failed app build silently falls through to Inno
+    # Setup, which then fails with a confusing "no files in win-unpacked" error.
+    throw "build_electron.py failed with exit code $LASTEXITCODE"
+}
 
 Write-Host "Building setup installer with Inno Setup..."
 & $iscc (Join-Path $repo "installer\homeguard.iss")
