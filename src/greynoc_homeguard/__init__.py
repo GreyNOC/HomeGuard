@@ -13,7 +13,7 @@ from .definition_schema import (
     validate_nvd_cve_payload as _validate_nvd_cve_payload,
 )
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 
 def _install_definition_schema_validation() -> None:
