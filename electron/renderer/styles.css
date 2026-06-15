@@ -1558,8 +1558,10 @@ textarea:focus-visible {
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; max-width: 1280px; margin: 0 auto; }
 .overview-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 
-.overview-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.overview-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.overview-hero-text { min-width: 0; }
 .overview-hero-text h2 { margin: 0; font-size: 30px; letter-spacing: -0.01em; color: var(--text); }
+.overview-globe { position: relative; width: 132px; height: 132px; flex: none; }
 .overview-subtext { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
 .overview-hero-actions { display: flex; align-items: center; gap: 12px; position: relative; flex-wrap: wrap; justify-content: flex-end; }
 .overview-gear { background: var(--surface-raised); border: 1px solid var(--border); color: var(--muted); width: 34px; height: 34px; border-radius: var(--radius-sm); cursor: pointer; font-size: 16px; line-height: 1; }
@@ -1627,4 +1629,8 @@ textarea:focus-visible {
 @media (max-width: 920px) {
   .overview-grid { grid-template-columns: 1fr; }
   .overview-assistant { position: static; }
+  .overview-globe { width: 104px; height: 104px; }
+}
+@media (max-width: 640px) {
+  .overview-globe { display: none; }
 }

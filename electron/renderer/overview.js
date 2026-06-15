@@ -59,6 +59,10 @@
     uiPrefs: { show_chat_bubble: true, show_weather_greeting: false },
   };
 
+  // The spinning GreyNOC globe in the hero (shared Three.js orb renderer). It
+  // idles with a slow rotation and spins faster while a scan is running.
+  let globe = null;
+
   // ---- data loading --------------------------------------------------------
 
   async function safeInvoke(fn, fallback) {
@@ -449,6 +453,7 @@
       if (!bridge?.scan || state.scanning) return;
       state.scanning = true;
       btn.disabled = true;
+      if (globe) globe.setActive(true);
       renderGreeting(state.report);
       setText("ovLastScan", "Scanning...");
       const activeScan = byId("activeScan");
@@ -459,6 +464,7 @@
       } finally {
         state.scanning = false;
         btn.disabled = false;
+        if (globe) globe.setActive(false);
         await refresh();
       }
     });
@@ -488,6 +494,12 @@
   }
 
   function init() {
+    // Spin up the shared GreyNOC globe in the hero. It rotates on its own (idle
+    // spin); we only toggle the brighter "active" state while scanning.
+    if (typeof window.initScanOrb3D === "function") {
+      globe = window.initScanOrb3D(byId("ovGlobe"));
+      if (globe) globe.setActive(false);
+    }
     wireQuickActions();
     wireSettings();
     wireScanNow();
@@ -495,6 +507,7 @@
     const bridge = hg();
     if (bridge?.onScanProgress) {
       bridge.onScanProgress(() => {
+        if (globe) globe.setActive(true);
         if (!state.scanning) {
           state.scanning = true;
           renderGreeting(state.report);
