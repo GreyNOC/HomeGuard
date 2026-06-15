@@ -25,6 +25,7 @@ const scanIndicatorLabel = $("scanIndicatorLabel");
 const scanOrb3D = typeof window.initScanOrb3D === "function" ? window.initScanOrb3D(scanOrb) : null;
 
 const tabs = {
+  overview: $("overviewTab"),
   protection: $("protectionTab"),
   devices: $("devicesTab"),
   networkMap: $("networkMapTab"),
@@ -37,6 +38,7 @@ const tabs = {
 };
 
 const pages = {
+  overview: $("overviewPage"),
   protection: $("protectionPage"),
   devices: $("devicesPage"),
   networkMap: $("networkMapPage"),
@@ -476,12 +478,18 @@ scanButton.addEventListener("click", async () => {
   updateReport(result);
   riskValue.textContent = parseMetric(result.stdout, "overall_risk") || "Report ready";
   deviceValue.textContent = "Report ready";
+  if (window.HomeGuardOverview) {
+    window.HomeGuardOverview.refresh();
+  }
 });
 
 updateButton.addEventListener("click", async () => {
   const result = await runCommand("Definition update", () => window.homeguard.updateDefinitions());
   if (result && result.status) {
     updateValue.textContent = result.status.update_status || result.status.record_count || "Updated";
+  }
+  if (window.HomeGuardOverview) {
+    window.HomeGuardOverview.refresh();
   }
 });
 
@@ -531,6 +539,12 @@ saveHtmlButton.addEventListener("click", async () => {
 });
 openFolderButton.addEventListener("click", () => latestReport?.reportDir && window.homeguard.openPath(latestReport.reportDir));
 
+tabs.overview.addEventListener("click", () => {
+  setActiveTab("overview");
+  if (window.HomeGuardOverview) {
+    window.HomeGuardOverview.refresh();
+  }
+});
 tabs.protection.addEventListener("click", () => {
   setActiveTab("protection");
   setStatus("Protection view ready.");

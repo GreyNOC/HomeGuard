@@ -103,6 +103,11 @@ function summarizeReport(report, entry) {
       devices,
       findings,
       next_steps: Array.isArray(report.next_steps) ? report.next_steps : [],
+      // Consumer-guidance fields from the report JSON. These feed the Overview
+      // dashboard's "Recommended for You" cards and disclaimer; both are static
+      // template text + integer counts, so they pass the privacy scrub cleanly.
+      priority_actions: Array.isArray(report.priority_actions) ? report.priority_actions : [],
+      disclaimer: typeof report.disclaimer === "string" ? report.disclaimer : "",
       scan_metadata: report.scan_metadata && typeof report.scan_metadata === "object" ? report.scan_metadata : {},
     }),
   };

@@ -41,7 +41,8 @@
         <button id="newChatButton" class="new-chat icon-plus" type="button"><span>New chat</span></button>
 
         <nav class="tabs" aria-label="GreyNOC sections">
-          <button class="tab active icon-chat" id="protectionTab" type="button"><span>Console</span></button>
+          <button class="tab active icon-status" id="overviewTab" type="button"><span>Overview</span></button>
+          <button class="tab icon-chat" id="protectionTab" type="button"><span>Console</span></button>
           <button class="tab icon-devices" id="devicesTab" type="button"><span>Devices</span></button>
           <button class="tab icon-devices" id="networkMapTab" type="button"><span>Network Map</span></button>
           <button class="tab icon-status" id="findingsTab" type="button"><span>Findings</span></button>
@@ -64,7 +65,107 @@
       </aside>
 
       <main class="workspace">
-        <section id="protectionPage" class="page active-page chat-page">
+        <section id="overviewPage" class="page active-page overview-page">
+          <div class="overview-grid">
+            <div class="overview-main">
+              <header class="overview-hero">
+                <div class="overview-hero-text">
+                  <h2 id="ovGreeting">Welcome</h2>
+                  <p id="ovSubtext" class="overview-subtext">Loading your home network status...</p>
+                </div>
+                <div class="overview-hero-actions">
+                  <button id="ovScanNow" class="action scan icon-scan" type="button">Scan Now</button>
+                  <span id="ovLastScan" class="meta">No scan yet</span>
+                  <button id="ovSettingsToggle" class="overview-gear" type="button" aria-label="Dashboard settings" title="Dashboard settings">⚙</button>
+                  <div id="ovSettingsPanel" class="overview-settings" role="menu" aria-label="Dashboard settings">
+                    <p class="overview-settings-title">Dashboard</p>
+                    <label class="toggle"><input id="ovToggleBubble" type="checkbox" checked /> <span>Show floating chat bubble</span></label>
+                    <label class="toggle"><input id="ovToggleWeather" type="checkbox" /> <span>Show local weather greeting</span></label>
+                    <p class="meta">Weather is opt-in and stays off by default. HomeGuard never sends your scan data to a weather provider.</p>
+                  </div>
+                </div>
+              </header>
+
+              <section class="overview-cards" aria-label="Network status">
+                <article class="overview-card">
+                  <div class="overview-card-icon ov-icon-risk" aria-hidden="true"></div>
+                  <small>Overall Risk</small>
+                  <b id="ovRiskValue">-</b>
+                  <span id="ovRiskDetail" class="meta">Run a scan to see this</span>
+                </article>
+                <article class="overview-card">
+                  <div class="overview-card-icon ov-icon-devices" aria-hidden="true"></div>
+                  <small>Devices</small>
+                  <b id="ovDeviceCount">-</b>
+                  <span id="ovDeviceDetail" class="meta">Run a scan to see this</span>
+                </article>
+                <article class="overview-card">
+                  <div class="overview-card-icon ov-icon-alerts" aria-hidden="true"></div>
+                  <small>Alerts</small>
+                  <b id="ovAlertCount">-</b>
+                  <span id="ovAlertDetail" class="meta">Run a scan to see this</span>
+                </article>
+                <article class="overview-card">
+                  <div class="overview-card-icon ov-icon-updates" aria-hidden="true"></div>
+                  <small>Updates</small>
+                  <b id="ovUpdateCount">-</b>
+                  <span id="ovUpdateDetail" class="meta">Definitions status unavailable</span>
+                </article>
+              </section>
+
+              <div class="overview-columns">
+                <section class="panel overview-panel">
+                  <h2>Recommended for You</h2>
+                  <div id="ovRecommended" class="overview-reco-list">
+                    <p class="ov-muted">Run your first scan to get personalized recommendations.</p>
+                  </div>
+                </section>
+                <section class="panel overview-panel">
+                  <h2>Recent Activity</h2>
+                  <div id="ovActivity" class="overview-activity">
+                    <p class="ov-muted">No activity yet. Run a scan to start your history.</p>
+                  </div>
+                </section>
+              </div>
+
+              <section class="panel overview-footer-panel">
+                <div class="overview-protection">
+                  <span class="ov-shield" aria-hidden="true"></span>
+                  <div>
+                    <b id="ovProtectionState">Not scanned yet</b>
+                    <span id="ovProtectionDetail" class="meta">Run your first scan</span>
+                  </div>
+                </div>
+                <div class="overview-chips">
+                  <div class="overview-chip">
+                    <small id="ovScanModeValue">Passive mode</small>
+                    <span id="ovScanModeDetail" class="meta">Active scans disabled</span>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <aside class="overview-assistant" aria-label="HomeGuard assistant">
+              <div class="overview-assistant-head">
+                <div class="avatar assistant-avatar" aria-hidden="true"></div>
+                <div>
+                  <b>HomeGuard Assistant</b>
+                  <span id="ovAssistantMode" class="meta">Local AI (Sterile)</span>
+                </div>
+              </div>
+              <p class="overview-assistant-intro">I can explain findings, answer questions, and guide you on what to do next, using your latest scan.</p>
+              <div class="overview-quick-actions">
+                <button id="ovQuickExplain" class="overview-quick" type="button">Explain this alert</button>
+                <button id="ovQuickFirst" class="overview-quick" type="button">What should I do first?</button>
+                <button id="ovQuickSecure" class="overview-quick" type="button">How to secure my network?</button>
+                <button id="ovQuickSummarize" class="overview-quick" type="button">Summarize my last scan</button>
+              </div>
+              <p class="meta overview-assistant-foot">Responses are private and stay on your device. AI is disabled when offline.</p>
+            </aside>
+          </div>
+        </section>
+
+        <section id="protectionPage" class="page chat-page">
           <section class="chat-column" aria-label="GreyNOC chat">
             <div id="chatMessages" class="chat-messages" aria-live="polite">
               <article class="message assistant-message">
@@ -421,11 +522,16 @@
       </main>
     </div>
 
+    <button id="floatingChatBubble" class="floating-chat-bubble" type="button" aria-label="Open HomeGuard assistant" title="HomeGuard Assistant">
+      <span class="floating-chat-bubble-icon" aria-hidden="true"></span>
+    </button>
+
     <script src="vendor/three.min.js"></script>
     <script src="scan-orb-3d.js"></script>
     <script src="renderer.js"></script>
     <script src="chat-assistant.js"></script>
     <script src="scan-progress-chat.js"></script>
     <script src="ai-settings.js"></script>
+    <script src="overview.js"></script>
   </body>
 </html>
