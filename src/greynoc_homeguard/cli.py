@@ -39,6 +39,7 @@ from .paths import (
     ensure_app_dirs,
     user_data_dir,
 )
+from .network_map import build_network_map
 from .quarantine import QuarantineError, QuarantineVault
 from .realtime import RealtimeWatcher, append_event, load_events
 from .remediation import quarantine_findings, scan_and_remediate
@@ -90,6 +91,7 @@ _APP_STYLE_COMMANDS = {
     "--scan-folder": "scan-folder",
     "--quarantine": "quarantine",
     "--watch": "watch",
+    "--network-map": "network-map",
     "--update-hashes": "update-hashes",
     "--update-definitions": "update-definitions",
     "--definitions-status": "definitions-status",
@@ -619,6 +621,48 @@ def cmd_watch(args: argparse.Namespace) -> int:
         stop_event.set()
         print()
         _ok("Real-time protection stopped.")
+    return 0
+
+
+def cmd_network_map(args: argparse.Namespace) -> int:
+    """Emit the local-device + cloud-node network map."""
+    network_map = build_network_map(resolve_dns=not args.no_dns)
+    if _JSON_MODE or args.json_out:
+        _emit_json(network_map)
+        return 0
+    stats = network_map.get("stats", {})
+    _rule("HomeGuard Network Map")
+    _panel(
+        "Map",
+        [
+            ("cidr", network_map.get("cidr") or "-"),
+            ("local_devices", stats.get("local_device_count", 0)),
+            ("inactive", stats.get("inactive_count", 0)),
+            ("peripherals", stats.get("peripheral_count", 0)),
+            ("cloud_nodes", stats.get("cloud_node_count", 0)),
+            ("gateway", network_map.get("gateway_ip") or "-"),
+        ],
+    )
+    rows = []
+    for device in network_map.get("active_devices", []):
+        rows.append([
+            device.get("ip", "-"),
+            _badge(device.get("type", "-"), {}),
+            device.get("friendly_name", "-"),
+            "local" if device.get("is_local") else ("router" if device.get("map_role") == "router" else ""),
+            _badge(device.get("severity", "info"), _SEVERITY_COLOR),
+        ])
+    if rows:
+        _section_title("Local Devices")
+        _table(["ip", "type", "name", "role", "severity"], rows, max_cell=30)
+    cloud = network_map.get("cloud_nodes", [])
+    if cloud:
+        _section_title("Cloud Nodes (this host)")
+        _table(
+            ["endpoint", "ports", "connections"],
+            [[c.get("label") or c.get("ip"), ",".join(str(p) for p in c.get("ports", [])), c.get("connection_count", 0)] for c in cloud[:20]],
+            max_cell=40,
+        )
     return 0
 
 
@@ -1223,6 +1267,15 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--enable", action="store_true", help="Persist real-time protection as enabled and exit")
     watch.add_argument("--disable", action="store_true", help="Persist real-time protection as disabled and exit")
     watch.set_defaults(func=cmd_watch)
+
+    network_map = sub.add_parser(
+        "network-map",
+        help="Build the local-device + cloud-node network map (JSON for the GUI)",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    network_map.add_argument("--json-out", action="store_true", help="Force JSON output even without the global --json flag")
+    network_map.add_argument("--no-dns", action="store_true", help="Skip reverse-DNS lookups for cloud endpoints")
+    network_map.set_defaults(func=cmd_network_map)
 
     update_hashes = sub.add_parser(
         "update-hashes",

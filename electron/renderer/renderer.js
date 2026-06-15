@@ -27,6 +27,7 @@ const scanOrb3D = typeof window.initScanOrb3D === "function" ? window.initScanOr
 const tabs = {
   protection: $("protectionTab"),
   devices: $("devicesTab"),
+  networkMap: $("networkMapTab"),
   findings: $("findingsTab"),
   fileScan: $("fileScanTab"),
   history: $("historyTab"),
@@ -38,6 +39,7 @@ const tabs = {
 const pages = {
   protection: $("protectionPage"),
   devices: $("devicesPage"),
+  networkMap: $("networkMapPage"),
   findings: $("findingsPage"),
   fileScan: $("fileScanPage"),
   history: $("historyPage"),
@@ -537,6 +539,10 @@ tabs.devices.addEventListener("click", () => {
   setActiveTab("devices");
   loadDevices();
 });
+tabs.networkMap.addEventListener("click", () => {
+  setActiveTab("networkMap");
+  loadNetworkMap();
+});
 tabs.findings.addEventListener("click", () => {
   setActiveTab("findings");
   loadFindings();
@@ -951,6 +957,224 @@ async function quarantineAction(action, entryId) {
 if ($("scanFileButton")) $("scanFileButton").addEventListener("click", () => runFileScan(false));
 if ($("scanFolderButton")) $("scanFolderButton").addEventListener("click", () => runFileScan(true));
 if ($("quarantineRefresh")) $("quarantineRefresh").addEventListener("click", loadQuarantine);
+
+// --- Network Map (local devices + cloud nodes) -----------------------------
+
+const networkMapApi = window.homeguard && typeof window.homeguard.networkMap === "function"
+  ? window.homeguard.networkMap
+  : null;
+const nmSvg = $("networkMapSvg");
+const nmViewport = $("networkMapViewport");
+const nmMetaEl = $("networkMapMeta");
+const nmDetailEl = $("networkMapDetail");
+const nmState = { map: null, zoom: 1, panX: 0, panY: 0, selected: "", positions: {}, width: 1000, height: 600, drag: null };
+const NM_W = 1000;
+
+function nmEscape(value) {
+  return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+  ));
+}
+
+function nmNodeClass(node) {
+  if (node.tier === "cloud") return "nm-cloud";
+  if (node.map_role === "router" || node.type === "router") return "nm-router";
+  if (node.is_local) return "nm-local";
+  if (String(node.type || "").includes("bundle")) return "nm-bundle";
+  return "nm-device";
+}
+
+function nmLayout(map) {
+  // Assign every node an (x, y) by tier: cloud on top, then gateway, this host,
+  // then the LAN devices (wrapped into rows), with collapsed bundles last.
+  const positions = {};
+  const cloud = map.cloud_nodes || [];
+  const localNodes = map.devices || [];
+  const gateway = localNodes.filter((n) => n.map_role === "router" || n.type === "router");
+  const host = localNodes.filter((n) => n.is_local && !gateway.includes(n));
+  const rest = localNodes.filter((n) => !gateway.includes(n) && !host.includes(n));
+
+  const place = (nodes, y) => {
+    const k = nodes.length;
+    nodes.forEach((node, i) => {
+      const x = (NM_W * (i + 1)) / (k + 1);
+      positions[node.id] = { x, y, node };
+    });
+  };
+
+  let y = 80;
+  place(cloud, y);
+  y += 140;
+  place(gateway, y);
+  y += 120;
+  place(host, y);
+  y += 140;
+  // LAN devices wrap into rows of up to 7.
+  const perRow = 7;
+  for (let i = 0; i < rest.length; i += perRow) {
+    place(rest.slice(i, i + perRow), y);
+    y += 120;
+  }
+  nmState.positions = positions;
+  nmState.width = NM_W;
+  nmState.height = Math.max(420, y + 40);
+}
+
+function nmRender() {
+  if (!nmSvg || !nmState.map) return;
+  const map = nmState.map;
+  nmLayout(map);
+  nmSvg.setAttribute("viewBox", `0 0 ${nmState.width} ${nmState.height}`);
+
+  const pos = nmState.positions;
+  let linksSvg = "";
+  for (const link of map.links || []) {
+    const a = pos[link.source];
+    const b = pos[link.target];
+    if (!a || !b) continue;
+    const cls = link.kind === "cloud" ? "nm-link nm-link-cloud" : (link.kind === "gateway" ? "nm-link nm-link-gateway" : "nm-link");
+    linksSvg += `<line class="${cls}" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" />`;
+  }
+
+  let nodesSvg = "";
+  for (const key of Object.keys(pos)) {
+    const { x, y, node } = pos[key];
+    const cls = nmNodeClass(node);
+    const sev = String(node.severity || "info").toLowerCase();
+    const selected = node.id === nmState.selected ? " nm-selected" : "";
+    const sevRing = sev === "critical" || sev === "high" ? `<circle class="nm-ring nm-ring-${sev}" r="26" />` : "";
+    const label = node.tier === "cloud"
+      ? (node.label || node.ip || "cloud")
+      : (node.is_local ? "this PC" : (node.friendly_name || node.hostname || node.ip || node.label || "device"));
+    const sub = node.tier === "cloud"
+      ? `${(node.ports || []).join(",")}`
+      : (node.count ? `${node.count} items` : (node.ip || ""));
+    nodesSvg += `<g class="nm-node ${cls}${selected}" data-id="${nmEscape(node.id)}" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">`
+      + sevRing
+      + `<circle class="nm-core" r="20" />`
+      + `<text class="nm-label" y="38" text-anchor="middle">${nmEscape(label).slice(0, 22)}</text>`
+      + (sub ? `<text class="nm-sublabel" y="52" text-anchor="middle">${nmEscape(sub).slice(0, 24)}</text>` : "")
+      + `</g>`;
+  }
+
+  nmSvg.innerHTML = `<g class="nm-zoom">${linksSvg}${nodesSvg}</g>`;
+  nmApplyTransform();
+  // Node click → details (event delegation).
+  nmSvg.querySelectorAll(".nm-node").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      event.stopPropagation();
+      nmSelect(el.getAttribute("data-id"));
+    });
+  });
+}
+
+function nmApplyTransform() {
+  const g = nmSvg && nmSvg.querySelector(".nm-zoom");
+  if (g) g.setAttribute("transform", `translate(${nmState.panX} ${nmState.panY}) scale(${nmState.zoom})`);
+}
+
+function nmFindNode(id) {
+  if (!nmState.map) return null;
+  for (const node of nmState.map.devices || []) if (node.id === id) return node;
+  for (const node of nmState.map.cloud_nodes || []) if (node.id === id) return node;
+  return null;
+}
+
+function nmSelect(id) {
+  nmState.selected = id;
+  const node = nmFindNode(id);
+  if (nmDetailEl) {
+    clearChildren(nmDetailEl);
+    if (!node) {
+      const p = document.createElement("p");
+      p.className = "meta";
+      p.textContent = "Select a node to see its details.";
+      nmDetailEl.appendChild(p);
+    } else {
+      const title = document.createElement("h3");
+      title.textContent = node.tier === "cloud"
+        ? (node.label || node.ip)
+        : (node.is_local ? "This PC" : (node.friendly_name || node.hostname || node.ip || "Device"));
+      nmDetailEl.appendChild(title);
+      const rows = node.tier === "cloud"
+        ? [["Endpoint", node.ip], ["Hostname", node.hostname], ["Ports", (node.ports || []).join(", ")], ["Connections", node.connection_count], ["Scope", "external / internet"]]
+        : [["IP", node.ip], ["Type", node.type], ["Vendor", node.vendor], ["MAC", node.mac], ["Trust", node.trust], ["Owner", node.owner], ["Open ports", (node.ports || []).join(", ")], ["Risk", node.risk != null ? `${node.risk}/100 (${node.severity})` : ""], ["Last seen", node.last_seen_at]];
+      const dl = document.createElement("dl");
+      dl.className = "network-map-detail-list";
+      for (const [k, v] of rows) {
+        if (v === "" || v == null) continue;
+        const dt = document.createElement("dt"); dt.textContent = k;
+        const dd = document.createElement("dd"); dd.textContent = String(v);
+        dl.appendChild(dt); dl.appendChild(dd);
+      }
+      nmDetailEl.appendChild(dl);
+    }
+  }
+  nmRender();
+}
+
+function nmZoom(factor) {
+  nmState.zoom = Math.min(4, Math.max(0.25, nmState.zoom * factor));
+  nmApplyTransform();
+}
+
+function nmFit() {
+  nmState.zoom = 1;
+  nmState.panX = 0;
+  nmState.panY = 0;
+  nmApplyTransform();
+}
+
+async function loadNetworkMap() {
+  if (!networkMapApi) {
+    if (nmMetaEl) nmMetaEl.textContent = "Network map IPC unavailable. Reload the app.";
+    return;
+  }
+  if (nmMetaEl) nmMetaEl.textContent = "Building network map…";
+  setStatus("Building network map…");
+  try {
+    const result = await networkMapApi();
+    if (!result || !result.ok || !result.map) {
+      if (nmMetaEl) nmMetaEl.textContent = (result && result.message) || "Could not build the network map.";
+      return;
+    }
+    nmState.map = result.map;
+    nmState.selected = "";
+    const s = result.map.stats || {};
+    if (nmMetaEl) {
+      nmMetaEl.textContent = `${s.local_device_count || 0} local device(s), ${s.cloud_node_count || 0} cloud node(s)`
+        + (result.map.cidr ? ` on ${result.map.cidr}` : "")
+        + (s.inactive_count ? `, ${s.inactive_count} inactive` : "");
+    }
+    nmRender();
+    setStatus("Network map ready.");
+  } catch (error) {
+    if (nmMetaEl) nmMetaEl.textContent = `Map failed: ${error.message || error}`;
+  }
+}
+
+if (nmViewport) {
+  nmViewport.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    nmZoom(event.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }, { passive: false });
+  nmViewport.addEventListener("pointerdown", (event) => {
+    nmState.drag = { x: event.clientX, y: event.clientY, panX: nmState.panX, panY: nmState.panY };
+    nmViewport.setPointerCapture(event.pointerId);
+  });
+  nmViewport.addEventListener("pointermove", (event) => {
+    if (!nmState.drag) return;
+    nmState.panX = nmState.drag.panX + (event.clientX - nmState.drag.x);
+    nmState.panY = nmState.drag.panY + (event.clientY - nmState.drag.y);
+    nmApplyTransform();
+  });
+  nmViewport.addEventListener("pointerup", () => { nmState.drag = null; });
+  nmViewport.addEventListener("pointerleave", () => { nmState.drag = null; });
+}
+if ($("networkMapRefresh")) $("networkMapRefresh").addEventListener("click", loadNetworkMap);
+if ($("networkMapZoomIn")) $("networkMapZoomIn").addEventListener("click", () => nmZoom(1.18));
+if ($("networkMapZoomOut")) $("networkMapZoomOut").addEventListener("click", () => nmZoom(1 / 1.18));
+if ($("networkMapFit")) $("networkMapFit").addEventListener("click", nmFit);
 
 function showPlaybookStatus(message, kind = "info") {
   if (!playbookDrawerStatus) return;

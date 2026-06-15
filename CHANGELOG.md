@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Network map (local devices + cloud nodes)
+- New `network_map` module adapting the GreyNOC saturn `noc_core.network_mapper` engine to HomeGuard's own data: local devices from the latest scan `report.json` (enriched with baseline trust/owner/type) and **cloud nodes** from this host's live external connections (`ai_traffic`). Builds nodes + links with local/cloud tiers, gateway/router detection, finding-driven risk, and collapsed peripheral/inactive bundles for larger home labs.
+- New graphical **Network Map** tab in the Electron app: a library-free SVG topology (cloud tier → gateway → this host → LAN devices) with drag-to-pan, scroll-to-zoom, fit, and click-to-detail. Backed by a `homeguard:network-map` IPC channel and `GNHL network-map [--json]` CLI command.
+- **Strict LAN-only scoping:** `detect_local_interfaces` now excludes VPN tunnel interfaces (tun/tap/wg/tailscale/etc.), so a VPN's private-range peers are no longer listed as local devices. Falls back gracefully if a VPN is the only interface.
+
 ### Release pipeline
 - The Windows release workflow no longer fails when code signing is unconfigured. It resolves a signing **mode** automatically — SignPath → GreyNOC PFX certificate → unsigned — and ships an unsigned installer + portable EXE with `SHA256SUMS.txt` when no signing is set up, instead of erroring at the certificate step.
 - Added a dormant, gated **SignPath** signing path (free Authenticode signing for open source) that activates once the `SIGNPATH_*` repo variables + the `SIGNPATH_API_TOKEN` secret are configured.
