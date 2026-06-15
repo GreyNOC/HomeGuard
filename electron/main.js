@@ -756,6 +756,26 @@ ipcMain.handle("homeguard:quarantine-list", async () => {
   }
 });
 
+ipcMain.handle("homeguard:network-map", async (_event, options = {}) => {
+  options = isPlainObject(options) ? options : {};
+  // Reverse-DNS is opt-in: it leaks current external connection IPs to the
+  // user's DNS resolver, so the default map view stays sterile.
+  const args = ["--json", "network-map"];
+  if (options.resolveDns === true) {
+    args.push("--resolve-dns");
+  }
+  try {
+    const result = await runHomeGuard(args);
+    const parsed = parseJsonStdout(result.stdout);
+    if (!parsed) {
+      return { ok: false, message: "Network map produced no parseable result." };
+    }
+    return { ok: true, map: parsed };
+  } catch (error) {
+    return { ok: false, message: cleanString(error.message || "Could not build network map.", 500) };
+  }
+});
+
 function cleanQuarantineId(value) {
   // Quarantine ids are uuid4 hex (or a unique prefix). Restrict to hex so a
   // crafted value can never reach the CLI as an option or path fragment.

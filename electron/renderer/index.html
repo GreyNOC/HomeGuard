@@ -43,6 +43,7 @@
         <nav class="tabs" aria-label="GreyNOC sections">
           <button class="tab active icon-chat" id="protectionTab" type="button"><span>Console</span></button>
           <button class="tab icon-devices" id="devicesTab" type="button"><span>Devices</span></button>
+          <button class="tab icon-devices" id="networkMapTab" type="button"><span>Network Map</span></button>
           <button class="tab icon-status" id="findingsTab" type="button"><span>Findings</span></button>
           <button class="tab icon-scan" id="fileScanTab" type="button"><span>File Scan</span></button>
           <button class="tab icon-history" id="historyTab" type="button"><span>Scan History</span></button>
@@ -171,6 +172,38 @@
               </table>
             </div>
             <p class="meta">Quarantine marks the device as action needed. Blocking traffic still happens at your router or WiFi access point.</p>
+          </section>
+        </section>
+
+        <section id="networkMapPage" class="page">
+          <section class="panel page-panel network-map-panel">
+            <div class="section-heading">
+              <h2>Network Map</h2>
+              <p class="meta">Local LAN devices and this host's live cloud connections. Drag to pan, scroll to zoom, click a node for details.</p>
+            </div>
+            <div class="toolbar page-toolbar">
+              <button id="networkMapRefresh" class="action accent icon-refresh" type="button">Rebuild Map</button>
+              <button id="networkMapZoomIn" class="action secondary" type="button">Zoom +</button>
+              <button id="networkMapZoomOut" class="action secondary" type="button">Zoom −</button>
+              <button id="networkMapFit" class="action secondary" type="button">Fit</button>
+              <label class="toggle"><input id="networkMapResolveDns" type="checkbox" /> <span>Resolve names</span></label>
+              <span id="networkMapMeta" class="meta">Run a scan, then rebuild the map.</span>
+            </div>
+            <div class="network-map-stage">
+              <div id="networkMapViewport" class="network-map-viewport" aria-label="Network topology">
+                <svg id="networkMapSvg" class="network-map-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+              </div>
+              <aside id="networkMapDetail" class="network-map-detail" aria-live="polite">
+                <p class="meta">Select a node to see its details.</p>
+              </aside>
+            </div>
+            <div class="network-map-legend" aria-hidden="true">
+              <span><i class="nm-dot nm-cloud"></i> Cloud node</span>
+              <span><i class="nm-dot nm-router"></i> Gateway/router</span>
+              <span><i class="nm-dot nm-local"></i> This PC</span>
+              <span><i class="nm-dot nm-device"></i> LAN device</span>
+              <span><i class="nm-dot nm-bundle"></i> Collapsed group</span>
+            </div>
           </section>
         </section>
 

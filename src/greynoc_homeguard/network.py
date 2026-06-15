@@ -101,6 +101,25 @@ def vendor_from_mac(mac: str) -> str:
     return COMMON_VENDOR_PREFIXES.get(clean[:6], "")
 
 
+try:  # vendored saturn token list; keep discovery + mapping in sync
+    from ._noc_core.discovery import VPN_INTERFACE_TOKENS as _VPN_INTERFACE_TOKENS
+except Exception:  # pragma: no cover - defensive if the vendored engine moves
+    _VPN_INTERFACE_TOKENS = ("tun", "tap", "vpn", "wireguard", "wg", "tailscale", "zerotier")
+
+
+def is_vpn_interface_name(name: str) -> bool:
+    """True when an interface name looks like a VPN tunnel (tun/tap/wg/etc.).
+
+    HomeGuard is a *local network* tool: a VPN tunnel typically rides a private
+    range (e.g. 10.8.0.x), so its remote peers would otherwise pass the LAN CIDR
+    check and show up as "local devices". Excluding VPN interfaces from the
+    detected local network keeps the device list and map strictly on the
+    physical/local LAN.
+    """
+    lowered = (name or "").lower()
+    return any(token in lowered for token in _VPN_INTERFACE_TOKENS)
+
+
 def is_private_or_local_network(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
     return bool(
         network.is_private
@@ -362,7 +381,12 @@ def detect_local_interfaces(config: NetworkSensorConfig | None = None) -> list[L
     else:
         interfaces = _detect_unix_interfaces(config)
     if interfaces:
-        return interfaces
+        # Strict LAN-only: drop VPN tunnel interfaces so their remote peers are
+        # never treated as local devices. If every detected interface is a VPN
+        # (rare; e.g. a VPN-only host), fall back to the full list so discovery
+        # is not silently disabled.
+        lan_interfaces = [iface for iface in interfaces if not is_vpn_interface_name(iface.name)]
+        return lan_interfaces or interfaces
 
     fallback: list[LocalInterface] = []
     try:
