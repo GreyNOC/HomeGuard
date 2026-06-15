@@ -90,6 +90,12 @@ browsing-destination history** — the most sensitive data HomeGuard would hold.
   devices' external destinations (household-consent consideration).
 - **Local-only**, no telemetry; Phase 1 keeps flows in memory only (no storage).
 - **Read-only, least-privilege** router account; pull model = no listening socket.
+- **SSH hardening:** host/user are validated so they cannot be misread as `ssh`
+  options; `BatchMode=yes` (never prompts); captured output is byte-capped. The
+  Phase-1 connector uses `StrictHostKeyChecking=accept-new` (trust-on-first-use):
+  the router key is auto-accepted on the *first* poll, so a MITM present at that
+  moment could impersonate the router. A future enhancement is a `known_hosts`
+  pin in the flow settings; for now this is the documented Phase-1 tradeoff.
 - Reuse `ai_traffic` redaction share-levels for any AI-bridge exposure.
 - (Phase 2 NetFlow only) bind the collector to the LAN interface, allow-list
   exporter IPs, bound packet sizes.

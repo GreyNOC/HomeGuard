@@ -221,6 +221,17 @@ class FlowEdgeTest(unittest.TestCase):
     def test_no_flow_edges_unchanged(self) -> None:
         self.assertEqual(self._build(None)["stats"]["per_device_cloud_edges"], 0)
 
+    def test_bundled_device_with_flow_is_promoted(self) -> None:
+        # The wearable (192.168.1.77) is normally bundled as peripheral; a live
+        # internet flow should promote it to active (no duplicate node).
+        edges = [{"src_lan_ip": "192.168.1.77", "dst_ip": "9.9.9.9", "dst_port": 443, "proto": "tcp"}]
+        result = self._build(edges)
+        active_ips = [n["ip"] for n in result["active_devices"]]
+        peripheral_ips = [n["ip"] for n in result["peripheral_devices"]]
+        self.assertIn("192.168.1.77", active_ips)
+        self.assertNotIn("192.168.1.77", peripheral_ips)
+        self.assertEqual(active_ips.count("192.168.1.77"), 1)  # no duplicate
+
 
 class EmptyReportTest(unittest.TestCase):
     def test_no_report_still_returns_host(self) -> None:

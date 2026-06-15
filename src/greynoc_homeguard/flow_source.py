@@ -32,6 +32,7 @@ from .models import utcnow
 LOG = get_logger("flow_source")
 
 CONNTRACK_MAX_LINES = 20000
+MAX_CONNTRACK_BYTES = 16 * 1024 * 1024  # cap router output to bound parse memory
 MAX_FLOW_EDGES = 2000
 SSH_CONNECT_TIMEOUT = 10
 SSH_OVERALL_TIMEOUT = 20
@@ -217,7 +218,10 @@ class OpenWrtConntrackSource:
                 f"Router conntrack read failed (exit {result.returncode}): "
                 f"{(result.stderr or '').strip()[:200]}"
             )
-        return result.stdout
+        # Cap the captured output so an enormous (or hostile) conntrack table
+        # can't blow up parse memory; the per-line cap in the parser bounds it
+        # further.
+        return (result.stdout or "")[:MAX_CONNTRACK_BYTES]
 
     def collect(self, *, exclude_ips: set[str] | None = None) -> list[FlowRecord]:
         return classify_edges(parse_nf_conntrack(self.fetch()), exclude_ips=exclude_ips)

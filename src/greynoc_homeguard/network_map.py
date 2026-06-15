@@ -446,20 +446,27 @@ def _flow_device_node(src_ip: str, *, host_ips: set[str]) -> dict[str, Any]:
 
 def _merge_flow_edges(
     active: list[dict[str, Any]],
+    peripheral: list[dict[str, Any]],
+    inactive: list[dict[str, Any]],
     cloud_nodes: list[dict[str, Any]],
-    links: list[dict[str, Any]],
     flow_edges: list[dict[str, Any]],
     *,
     host_ips: set[str],
     resolve_dns: bool,
-) -> int:
-    """Fold per-device router-flow edges into the map in place. Each edge adds a
-    device->cloud link; external dst IPs become shared cloud nodes; LAN srcs not
-    already in the device set get a lightweight node. Returns the number of
-    device->cloud flow links added."""
+) -> tuple[list[dict[str, Any]], int]:
+    """Fold per-device router-flow edges into the map in place.
+
+    Each edge adds a device->cloud link; external dst IPs become shared cloud
+    nodes. Device lookup spans *all* nodes (active + bundled) so an edge never
+    creates a duplicate of a device that was collapsed into a bundle; a bundled
+    device with live internet flow is **promoted** to the active set (it is not
+    really peripheral/inactive). LAN srcs with no known node get a lightweight
+    node. Returns ``(flow_links, count)``."""
     cloud_by_ip = {str(n.get("ip")): n for n in cloud_nodes if n.get("ip")}
-    device_by_ip = {str(n.get("ip")): n for n in active if n.get("ip")}
-    link_keys = {(l["source"], l["target"], l.get("kind")) for l in links}
+    device_by_ip = {str(n.get("ip")): n for n in (active + peripheral + inactive) if n.get("ip")}
+    active_ids = {n["id"] for n in active}
+    flow_links: list[dict[str, Any]] = []
+    link_keys: set[tuple[str, str, str]] = set()
     new_cloud: list[dict[str, Any]] = []
     added = 0
     for edge in flow_edges:
@@ -471,7 +478,14 @@ def _merge_flow_edges(
         if device is None:
             device = _flow_device_node(src, host_ips=host_ips)
             active.append(device)
+            active_ids.add(device["id"])
             device_by_ip[src] = device
+        elif device["id"] not in active_ids:
+            # A device with live internet flow is active, not peripheral/inactive.
+            active.append(device)
+            active_ids.add(device["id"])
+            for bundle_list in (peripheral, inactive):
+                bundle_list[:] = [n for n in bundle_list if n["id"] != device["id"]]
         cloud = cloud_by_ip.get(dst)
         if cloud is None:
             cloud = {
@@ -495,7 +509,7 @@ def _merge_flow_edges(
         cloud["connection_count"] = int(cloud.get("connection_count") or 0) + 1
         key = (device["id"], cloud["id"], "cloud")
         if key not in link_keys:
-            links.append({
+            flow_links.append({
                 "source": device["id"],
                 "target": cloud["id"],
                 "kind": "cloud",
@@ -513,7 +527,7 @@ def _merge_flow_edges(
     for node in cloud_nodes:
         node["ports"] = sorted(set(node.get("ports") or []))
     active.sort(key=lambda item: _ip_sort_key(str(item.get("ip") or "")))
-    return added
+    return flow_links, added
 
 
 def build_network_map(
@@ -566,13 +580,18 @@ def build_network_map(
     active = [n for n in all_nodes if n["id"] not in bundled_ids]
 
     cloud_nodes = _cloud_nodes(resolve_dns=resolve_dns)
-    links = _build_links(active, cloud_nodes, host_node=host_node, gateway_node=gateway_node)
 
+    # Merge router-flow edges first (it may promote a bundled device with live
+    # internet flow back into the active set) so links are built over the final
+    # active set and the promoted device gets its gateway link too.
+    flow_links: list[dict[str, Any]] = []
     flow_edge_count = 0
     if flow_edges:
-        flow_edge_count = _merge_flow_edges(
-            active, cloud_nodes, links, flow_edges, host_ips=host_ips, resolve_dns=resolve_dns
+        flow_links, flow_edge_count = _merge_flow_edges(
+            active, peripheral, inactive, cloud_nodes, flow_edges, host_ips=host_ips, resolve_dns=resolve_dns
         )
+
+    links = _build_links(active, cloud_nodes, host_node=host_node, gateway_node=gateway_node) + flow_links
 
     visible = list(active)
     if peripheral:
