@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 - Per-device cloud edges (Network Map Phase 1) (2026-06-15)
 
 ### Per-device cloud edges (Network Map, Phase 1)
 - New `flow_source` module reads the router's **conntrack** table over an outbound SSH poll (OpenWrt/DD-WRT `cat /proc/net/nf_conntrack` via the system `ssh` client — no new dependency, no listening socket) and turns it into `device → external-endpoint` edges. This is the first source that shows what *other* LAN devices (not just this host) talk to on the internet. Pure `parse_nf_conntrack` + `classify_edges` (private LAN src → public unicast dst, multicast/LAN-internal dropped).
