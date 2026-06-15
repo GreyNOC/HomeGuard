@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Per-device cloud edges (Network Map, Phase 1)
+- New `flow_source` module reads the router's **conntrack** table over an outbound SSH poll (OpenWrt/DD-WRT `cat /proc/net/nf_conntrack` via the system `ssh` client — no new dependency, no listening socket) and turns it into `device → external-endpoint` edges. This is the first source that shows what *other* LAN devices (not just this host) talk to on the internet. Pure `parse_nf_conntrack` + `classify_edges` (private LAN src → public unicast dst, multicast/LAN-internal dropped).
+- `network_map.build_network_map(flow_edges=...)` merges these into the map: external dsts become shared cloud nodes and `kind:"cloud"` links are drawn from each device node (the existing SVG renderer draws them with no change). Devices seen only in conntrack get a lightweight node so they still appear. New `stats.per_device_cloud_edges`.
+- **Opt-in, off by default** (sterile parity); fetched live and **not persisted** (no stored browsing history). Credentials follow the env-var pattern — settings store the router host/user and the *name* of an env var holding the SSH key path, never the key. CLI: `GNHL flow status|test|set`. Reverse-DNS for flow cloud nodes stays opt-in.
+- Design: `docs/design/PER_DEVICE_CLOUD_MAP.md` (phased plan; NetFlow/IPFIX/sFlow + more router connectors are additive Phases 2–3).
+
 ## 1.7.0 - Network Map + release-pipeline hardening (2026-06-15)
 
 ### Network map (local devices + cloud nodes)

@@ -67,6 +67,32 @@ class CliSmokeTests(unittest.TestCase):
         ensure_app_dirs()
         self.assertEqual(cli.cmd_network_map(Namespace(resolve_dns=False, json_out=False)), 0)
 
+    def test_flow_status_command_does_not_crash(self):
+        from greynoc_homeguard import cli
+        from greynoc_homeguard.paths import ensure_app_dirs
+
+        ensure_app_dirs()
+        self.assertEqual(cli.cmd_flow_status(Namespace()), 0)
+
+    def test_flow_test_requires_host(self):
+        from greynoc_homeguard import cli
+        from greynoc_homeguard.paths import ensure_app_dirs
+
+        ensure_app_dirs()
+        self.assertEqual(cli.cmd_flow_test(Namespace()), 2)
+
+    def test_flow_set_persists_config(self):
+        from greynoc_homeguard import cli
+        from greynoc_homeguard.paths import ensure_app_dirs
+        from greynoc_homeguard.settings import AppSettings
+
+        ensure_app_dirs()
+        rc = cli.cmd_flow_set(Namespace(host="192.168.1.1", user="root", port=22, key_path=None, key_env=None, enable=True, disable=False))
+        self.assertEqual(rc, 0)
+        cfg = AppSettings().load().flow_source_config()
+        self.assertTrue(cfg["enabled"])
+        self.assertEqual(cfg["host"], "192.168.1.1")
+
     def test_quarantine_list_command_does_not_crash_when_empty(self):
         from greynoc_homeguard import cli
         from greynoc_homeguard.paths import ensure_app_dirs

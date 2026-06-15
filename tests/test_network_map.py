@@ -181,6 +181,58 @@ class LocalHostIpTest(unittest.TestCase):
         self.assertIsInstance(ips, set)
 
 
+class FlowEdgeTest(unittest.TestCase):
+    def _build(self, flow_edges, **kwargs):
+        with mock.patch.object(network_map, "_local_host_ips", return_value={"192.168.1.50"}), \
+             mock.patch.object(network_map, "_load_baseline_records", return_value={}), \
+             mock.patch.object(network_map.ai_traffic, "collect_traffic_summary", _fake_traffic), \
+             mock.patch.object(network_map.ai_traffic, "hostname_for_endpoint", return_value="named.example"):
+            return network_map.build_network_map(report=SAMPLE_REPORT, flow_edges=flow_edges, **kwargs)
+
+    def test_device_to_cloud_edges(self) -> None:
+        edges = [
+            {"src_lan_ip": "192.168.1.20", "dst_ip": "9.9.9.9", "dst_port": 443, "proto": "tcp"},
+            {"src_lan_ip": "192.168.1.1", "dst_ip": "1.1.1.1", "dst_port": 53, "proto": "udp"},
+        ]
+        result = self._build(edges)
+        self.assertEqual(result["stats"]["per_device_cloud_edges"], 2)
+        cloud_ips = {c["ip"] for c in result["cloud_nodes"]}
+        self.assertIn("9.9.9.9", cloud_ips)
+        self.assertIn("1.1.1.1", cloud_ips)
+        phone = next(n for n in result["active_devices"] if n["ip"] == "192.168.1.20")
+        flow_links = [l for l in result["links"] if l.get("label") == "flow"]
+        self.assertTrue(any(l["source"] == phone["id"] and l["target"].endswith("9.9.9.9") for l in flow_links))
+
+    def test_unknown_lan_src_gets_node(self) -> None:
+        edges = [{"src_lan_ip": "192.168.1.231", "dst_ip": "9.9.9.9", "dst_port": 443, "proto": "tcp"}]
+        result = self._build(edges)
+        ips = {n["ip"] for n in result["active_devices"]}
+        self.assertIn("192.168.1.231", ips)
+        new_node = next(n for n in result["active_devices"] if n["ip"] == "192.168.1.231")
+        self.assertIn("router-flow", new_node["discovered_by"])
+
+    def test_flow_cloud_dns_opt_in(self) -> None:
+        edges = [{"src_lan_ip": "192.168.1.20", "dst_ip": "9.9.9.9", "dst_port": 443, "proto": "tcp"}]
+        node_off = next(c for c in self._build(edges, resolve_dns=False)["cloud_nodes"] if c["ip"] == "9.9.9.9")
+        self.assertEqual(node_off["label"], "9.9.9.9")
+        node_on = next(c for c in self._build(edges, resolve_dns=True)["cloud_nodes"] if c["ip"] == "9.9.9.9")
+        self.assertEqual(node_on["hostname"], "named.example")
+
+    def test_no_flow_edges_unchanged(self) -> None:
+        self.assertEqual(self._build(None)["stats"]["per_device_cloud_edges"], 0)
+
+    def test_bundled_device_with_flow_is_promoted(self) -> None:
+        # The wearable (192.168.1.77) is normally bundled as peripheral; a live
+        # internet flow should promote it to active (no duplicate node).
+        edges = [{"src_lan_ip": "192.168.1.77", "dst_ip": "9.9.9.9", "dst_port": 443, "proto": "tcp"}]
+        result = self._build(edges)
+        active_ips = [n["ip"] for n in result["active_devices"]]
+        peripheral_ips = [n["ip"] for n in result["peripheral_devices"]]
+        self.assertIn("192.168.1.77", active_ips)
+        self.assertNotIn("192.168.1.77", peripheral_ips)
+        self.assertEqual(active_ips.count("192.168.1.77"), 1)  # no duplicate
+
+
 class EmptyReportTest(unittest.TestCase):
     def test_no_report_still_returns_host(self) -> None:
         with mock.patch.object(network_map, "_local_host_ips", return_value={"192.168.1.50"}), \
