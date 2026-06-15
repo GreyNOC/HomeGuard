@@ -29,6 +29,12 @@ Microsoft-trusted CA.
 projects. HomeGuard is public and MIT-licensed, so it qualifies. This is the
 free path to warning-free binaries.
 
+> **The CI side is already wired.** `windows-release.yml` stages the unsigned
+> artifacts, submits them to SignPath, and promotes the signed results
+> automatically — but only once the variables/secret below exist (until then it
+> stays on the unsigned path). The steps below are the account setup **you** do;
+> Claude can't create the SignPath account or set repository secrets for you.
+
 1. Apply at <https://signpath.io/open-source> with the repository URL.
 2. After approval, install the **SignPath GitHub app** on the repo and create a
    project + signing policy in the SignPath dashboard.
@@ -70,11 +76,25 @@ instead):
    `HOMEGUARD_SIGN_CERT_PASSWORD`.
 3. Push a tag — `pfx` mode activates automatically.
 
-## Verifying an unsigned download
+## Unsigned builds: SmartScreen + Defender false positives
 
-Until signing is enabled, verify integrity with the published checksums:
+Until signing is enabled, the binaries are unsigned. Expect two **benign**
+warnings — neither is a real threat in our published builds:
+
+- **SmartScreen** "unknown publisher" on first run.
+- **Microsoft Defender** may flag the EXE with a machine-learning heuristic such
+  as `Trojan:Win32/Bearfoos.A!ml`. The `!ml` suffix marks a heuristic guess, not
+  a confirmed signature; `Bearfoos.A!ml` is a well-known false positive against
+  unsigned, PyInstaller-packaged apps (the bundled Python core is a PyInstaller
+  EXE). Enabling SignPath signing below removes it for everyone, and you can also
+  report it at <https://www.microsoft.com/en-us/wdsi/filesubmission>.
+
+Verify integrity with the published checksums (substitute the real version):
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\HomeGuard-Portable-v1.6.0.exe
+Get-FileHash -Algorithm SHA256 .\HomeGuard-Portable-vX.Y.Z.exe
 # compare against SHA256SUMS.txt from the release
 ```
+
+If the hash matches, the binary is exactly what CI built; you can allow that
+specific file in Windows Security (don't disable Defender).

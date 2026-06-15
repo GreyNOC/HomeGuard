@@ -255,6 +255,49 @@ bash scripts/compile_android.sh release
 bash scripts/compile_android.sh aab
 ```
 
+## Download for Windows
+
+Prebuilt Windows binaries are attached to each
+[GitHub release](https://github.com/GreyNOC/HomeGuard/releases/latest):
+
+- `HomeGuard-Setup-vX.Y.Z.exe` — installer
+- `HomeGuard-Portable-vX.Y.Z.exe` — portable, no install
+- `SHA256SUMS.txt` — checksums
+
+### Heads-up: unsigned-binary warnings (and how to verify)
+
+Until code signing is enabled (see below), the binaries are **unsigned**, which
+triggers two expected warnings — neither is a real threat:
+
+- **SmartScreen** shows an *"unknown publisher"* prompt. Choose **More info →
+  Run anyway** once you've verified the download (below).
+- **Microsoft Defender** may flag the EXE with a machine-learning heuristic such
+  as **`Trojan:Win32/Bearfoos.A!ml`**. The `!ml` suffix means it's a heuristic
+  *guess*, not a confirmed signature match — and `Bearfoos.A!ml` is one of the
+  most common **false positives** Defender raises against unsigned,
+  PyInstaller-packaged apps (HomeGuard bundles its Python core as a PyInstaller
+  EXE). It is **not** a real detection in our published builds.
+
+**Verify your download before trusting it.** Confirm the file is byte-for-byte
+the one our CI built, then it's safe to keep:
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\HomeGuard-Portable-vX.Y.Z.exe
+# Compare the hash against the matching line in SHA256SUMS.txt from the release.
+```
+
+If the hash matches, the binary is exactly what GitHub Actions produced. You can
+then allow your verified copy in **Windows Security → Virus & threat protection
+→ Protection history / Allowed threats** (allow the specific file — don't disable
+Defender). If the hash does **not** match, do not run it.
+
+The durable fix is Authenticode code signing, which removes both warnings for
+everyone. HomeGuard's release workflow is already wired for free
+[SignPath](https://signpath.io/open-source) signing — see
+[`docs/release/SIGNING.md`](docs/release/SIGNING.md) to activate it. You can also
+report the false positive to Microsoft at the
+[Defender sample submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission).
+
 ## Install from source
 
 ```bash

@@ -209,7 +209,7 @@ jobs:
           switch ($mode) {
             "signpath" { $signingLine = "Signed with SignPath Authenticode signing." }
             "pfx" { $signingLine = "Signed with the GreyNOC code-signing certificate (Authenticode)." }
-            default { $signingLine = "UNSIGNED build - Windows SmartScreen may warn on first run. Verify the SHA-256 checksums below before running." }
+            default { $signingLine = "UNSIGNED build. Windows SmartScreen may warn on first run, and Microsoft Defender may flag the EXE with a machine-learning heuristic such as Trojan:Win32/Bearfoos.A!ml. That is a known FALSE POSITIVE for unsigned, PyInstaller-packaged apps (the ``!ml`` suffix means a heuristic guess, not a confirmed signature), not a real detection. Verify the download against the SHA-256 checksums below before running, then allow your verified copy in Windows Security. Signed builds remove these warnings - see docs/release/SIGNING.md." }
           }
           $notes = "Windows release for HomeGuard v$version.`n`n$signingLine`n`nAssets:`n- HomeGuard-Setup-v$version.exe installer`n- HomeGuard-Portable-v$version.exe portable executable`n- SHA256SUMS.txt checksums"
           $assets = @("${{ steps.assets.outputs.installer }}", "${{ steps.assets.outputs.portable }}", "${{ steps.assets.outputs.checksums }}")
