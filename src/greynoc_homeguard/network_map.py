@@ -417,10 +417,110 @@ def _bundle(node_list: list[dict[str, Any]], *, bundle_id: str, label: str, bund
     }
 
 
+def _flow_device_node(src_ip: str, *, host_ips: set[str]) -> dict[str, Any]:
+    """Minimal local node for a LAN device seen only in router flow data
+    (present in conntrack but not in the latest scan report)."""
+    return {
+        "id": _safe_id("dev", src_ip),
+        "tier": "local",
+        "ip": src_ip,
+        "mac": "",
+        "hostname": "",
+        "friendly_name": src_ip,
+        "vendor": "",
+        "type": "other",
+        "status": "online",
+        "is_local": src_ip in host_ips,
+        "map_role": "local" if src_ip in host_ips else "",
+        "trust": "unknown",
+        "owner": "unknown",
+        "ports": [],
+        "open_ports": [],
+        "risk": 0,
+        "severity": "info",
+        "finding_count": 0,
+        "discovered_by": ["router-flow"],
+        "last_seen_at": "",
+    }
+
+
+def _merge_flow_edges(
+    active: list[dict[str, Any]],
+    cloud_nodes: list[dict[str, Any]],
+    links: list[dict[str, Any]],
+    flow_edges: list[dict[str, Any]],
+    *,
+    host_ips: set[str],
+    resolve_dns: bool,
+) -> int:
+    """Fold per-device router-flow edges into the map in place. Each edge adds a
+    device->cloud link; external dst IPs become shared cloud nodes; LAN srcs not
+    already in the device set get a lightweight node. Returns the number of
+    device->cloud flow links added."""
+    cloud_by_ip = {str(n.get("ip")): n for n in cloud_nodes if n.get("ip")}
+    device_by_ip = {str(n.get("ip")): n for n in active if n.get("ip")}
+    link_keys = {(l["source"], l["target"], l.get("kind")) for l in links}
+    new_cloud: list[dict[str, Any]] = []
+    added = 0
+    for edge in flow_edges:
+        src = str(edge.get("src_lan_ip") or "")
+        dst = str(edge.get("dst_ip") or "")
+        if not src or not dst:
+            continue
+        device = device_by_ip.get(src)
+        if device is None:
+            device = _flow_device_node(src, host_ips=host_ips)
+            active.append(device)
+            device_by_ip[src] = device
+        cloud = cloud_by_ip.get(dst)
+        if cloud is None:
+            cloud = {
+                "id": _safe_id("cloud", dst),
+                "tier": "cloud",
+                "type": "cloud",
+                "ip": dst,
+                "label": dst,
+                "hostname": "",
+                "ports": [],
+                "connection_count": 0,
+                "scope": "external",
+                "source": "router-flow",
+            }
+            cloud_nodes.append(cloud)
+            cloud_by_ip[dst] = cloud
+            new_cloud.append(cloud)
+        port = int(edge.get("dst_port") or 0)
+        if port and port not in cloud["ports"]:
+            cloud["ports"].append(port)
+        cloud["connection_count"] = int(cloud.get("connection_count") or 0) + 1
+        key = (device["id"], cloud["id"], "cloud")
+        if key not in link_keys:
+            links.append({
+                "source": device["id"],
+                "target": cloud["id"],
+                "kind": "cloud",
+                "label": "flow",
+                "confidence": 0.8,
+            })
+            link_keys.add(key)
+            added += 1
+    if resolve_dns and new_cloud:
+        for node in new_cloud[:MAX_DNS_RESOLVES]:
+            name = ai_traffic.hostname_for_endpoint(node["ip"])
+            if name:
+                node["hostname"] = name
+                node["label"] = name
+    for node in cloud_nodes:
+        node["ports"] = sorted(set(node.get("ports") or []))
+    active.sort(key=lambda item: _ip_sort_key(str(item.get("ip") or "")))
+    return added
+
+
 def build_network_map(
     *,
     report: dict[str, Any] | None = None,
     resolve_dns: bool = False,
+    flow_edges: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the local-device + cloud-node map as a JSON-able dict.
 
@@ -468,6 +568,12 @@ def build_network_map(
     cloud_nodes = _cloud_nodes(resolve_dns=resolve_dns)
     links = _build_links(active, cloud_nodes, host_node=host_node, gateway_node=gateway_node)
 
+    flow_edge_count = 0
+    if flow_edges:
+        flow_edge_count = _merge_flow_edges(
+            active, cloud_nodes, links, flow_edges, host_ips=host_ips, resolve_dns=resolve_dns
+        )
+
     visible = list(active)
     if peripheral:
         visible.append(_bundle(peripheral, bundle_id="bundle_peripheral", label="wearables/remotes", bundle_type="peripheral-bundle"))
@@ -492,6 +598,7 @@ def build_network_map(
             "peripheral_count": len(peripheral),
             "cloud_node_count": len(cloud_nodes),
             "finding_count": sum(len(v) for v in findings_by_ip.values()),
+            "per_device_cloud_edges": flow_edge_count,
         },
         "source": {
             "report_id": str(report.get("report_id") or ""),

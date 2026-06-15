@@ -51,6 +51,15 @@ class AppSettings:
                 "last_updated": "",
                 "last_status": "",
             },
+            "flow_source": {
+                "enabled": False,
+                "provider": "openwrt",
+                "host": "",
+                "user": "root",
+                "port": 22,
+                "key_env": "",
+                "key_path": "",
+            },
             "ignored_findings": {},
         }
 
@@ -82,6 +91,9 @@ class AppSettings:
         hash_feed = dict(defaults["hash_feed"])
         hash_feed.update(loaded.get("hash_feed") if isinstance(loaded.get("hash_feed"), dict) else {})
         self.data["hash_feed"] = hash_feed
+        flow_source = dict(defaults["flow_source"])
+        flow_source.update(loaded.get("flow_source") if isinstance(loaded.get("flow_source"), dict) else {})
+        self.data["flow_source"] = flow_source
         ignored = loaded.get("ignored_findings") if isinstance(loaded.get("ignored_findings"), dict) else {}
         self.data["ignored_findings"] = ignored
         return self
@@ -176,6 +188,48 @@ class AppSettings:
         if last_status is not None:
             cfg["last_status"] = str(last_status)
         self.data["hash_feed"] = cfg
+        self.save()
+        return cfg
+
+    def flow_source_config(self) -> dict[str, Any]:
+        cfg = self.data.get("flow_source") if isinstance(self.data.get("flow_source"), dict) else {}
+        return {
+            "enabled": bool(cfg.get("enabled", False)),
+            "provider": str(cfg.get("provider", "openwrt") or "openwrt"),
+            "host": str(cfg.get("host", "") or ""),
+            "user": str(cfg.get("user", "root") or "root"),
+            "port": int(cfg.get("port", 22) or 22),
+            "key_env": str(cfg.get("key_env", "") or ""),
+            "key_path": str(cfg.get("key_path", "") or ""),
+        }
+
+    def set_flow_source(
+        self,
+        *,
+        enabled: bool | None = None,
+        provider: str | None = None,
+        host: str | None = None,
+        user: str | None = None,
+        port: int | None = None,
+        key_env: str | None = None,
+        key_path: str | None = None,
+    ) -> dict[str, Any]:
+        cfg = self.flow_source_config()
+        if enabled is not None:
+            cfg["enabled"] = bool(enabled)
+        if provider is not None:
+            cfg["provider"] = str(provider)
+        if host is not None:
+            cfg["host"] = str(host)
+        if user is not None:
+            cfg["user"] = str(user)
+        if port is not None:
+            cfg["port"] = int(port)
+        if key_env is not None:
+            cfg["key_env"] = str(key_env)
+        if key_path is not None:
+            cfg["key_path"] = str(key_path)
+        self.data["flow_source"] = cfg
         self.save()
         return cfg
 

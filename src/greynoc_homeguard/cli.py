@@ -39,6 +39,7 @@ from .paths import (
     ensure_app_dirs,
     user_data_dir,
 )
+from .flow_source import collect_flow_edges
 from .network_map import build_network_map
 from .quarantine import QuarantineError, QuarantineVault
 from .realtime import RealtimeWatcher, append_event, load_events
@@ -92,6 +93,7 @@ _APP_STYLE_COMMANDS = {
     "--quarantine": "quarantine",
     "--watch": "watch",
     "--network-map": "network-map",
+    "--flow": "flow",
     "--update-hashes": "update-hashes",
     "--update-definitions": "update-definitions",
     "--definitions-status": "definitions-status",
@@ -626,7 +628,13 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 def cmd_network_map(args: argparse.Namespace) -> int:
     """Emit the local-device + cloud-node network map."""
-    network_map = build_network_map(resolve_dns=bool(getattr(args, "resolve_dns", False)))
+    # Per-device cloud edges from the router flow source (opt-in; returns [] when
+    # disabled/unconfigured, so the map degrades to host-only cloud nodes).
+    flow_edges = collect_flow_edges()
+    network_map = build_network_map(
+        resolve_dns=bool(getattr(args, "resolve_dns", False)),
+        flow_edges=flow_edges or None,
+    )
     if _JSON_MODE or args.json_out:
         _emit_json(network_map)
         return 0
@@ -640,6 +648,7 @@ def cmd_network_map(args: argparse.Namespace) -> int:
             ("inactive", stats.get("inactive_count", 0)),
             ("peripherals", stats.get("peripheral_count", 0)),
             ("cloud_nodes", stats.get("cloud_node_count", 0)),
+            ("per_device_cloud", stats.get("per_device_cloud_edges", 0)),
             ("gateway", network_map.get("gateway_ip") or "-"),
         ],
     )
@@ -664,6 +673,72 @@ def cmd_network_map(args: argparse.Namespace) -> int:
             max_cell=40,
         )
     return 0
+
+
+def cmd_flow_status(_args: argparse.Namespace) -> int:
+    """Show the router flow source (per-device cloud edges) configuration."""
+    cfg = AppSettings().load().flow_source_config()
+    if _JSON_MODE:
+        safe = dict(cfg)
+        safe["key_configured"] = bool(cfg.get("key_env") or cfg.get("key_path"))
+        _emit_json(safe)
+        return 0
+    key_desc = (f"env:{cfg['key_env']}" if cfg["key_env"] else (cfg["key_path"] or "default ssh key/agent"))
+    _panel(
+        "Flow Source (per-device cloud)",
+        [
+            ("enabled", _badge("on" if cfg["enabled"] else "off", {"on": "green", "off": "muted"})),
+            ("provider", cfg["provider"]),
+            ("router", f"{cfg['user']}@{cfg['host']}:{cfg['port']}" if cfg["host"] else "-"),
+            ("ssh key", key_desc),
+        ],
+    )
+    print(_muted("  Per-device cloud edges are opt-in. `flow test` verifies connectivity; `flow set --enable` turns it on."))
+    return 0
+
+
+def cmd_flow_test(_args: argparse.Namespace) -> int:
+    """Attempt to read per-device cloud edges from the configured router."""
+    from .flow_source import test_connection
+
+    cfg = AppSettings().load().flow_source_config()
+    if not cfg.get("host"):
+        print("error: no router host configured. Run `flow set --host <ip> --user <user>` first.", file=sys.stderr)
+        return 2
+    result = test_connection(cfg)
+    if _JSON_MODE:
+        _emit_json(result)
+        return 0 if result.get("ok") else 2
+    if not result.get("ok"):
+        print(f"error: flow source test failed: {result.get('error')}", file=sys.stderr)
+        return 2
+    edges = result.get("edges", [])
+    _ok(f"Collected {result.get('edge_count', 0)} device->cloud edge(s) from the router.")
+    if edges:
+        _table(
+            ["device", "endpoint", "port", "proto"],
+            [[e.get("src_lan_ip"), e.get("dst_ip"), e.get("dst_port"), e.get("proto")] for e in edges[:25]],
+            max_cell=30,
+        )
+    else:
+        _warn("Connected, but no device->cloud edges yet (conntrack may be empty or all LAN-internal).")
+    return 0
+
+
+def cmd_flow_set(args: argparse.Namespace) -> int:
+    """Configure the router flow source."""
+    settings = AppSettings().load()
+    enabled = True if args.enable else (False if args.disable else None)
+    cfg = settings.set_flow_source(
+        enabled=enabled,
+        host=args.host,
+        user=args.user,
+        port=args.port,
+        key_path=args.key_path,
+        key_env=args.key_env,
+    )
+    _ok("Flow source updated.")
+    return cmd_flow_status(args) if not _JSON_MODE else (_emit_json(cfg) or 0)
 
 
 def cmd_update_hashes(args: argparse.Namespace) -> int:
@@ -1280,6 +1355,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reverse-DNS the cloud endpoints (off by default; sends current external IPs to your DNS resolver)",
     )
     network_map.set_defaults(func=cmd_network_map)
+
+    flow = sub.add_parser(
+        "flow",
+        help="Per-device cloud edges from your router's conntrack (opt-in)",
+        formatter_class=HomeGuardHelpFormatter,
+    )
+    flow_sub = flow.add_subparsers(dest="flow_command", required=True)
+    flow_status = flow_sub.add_parser("status", help="Show the flow-source configuration", formatter_class=HomeGuardHelpFormatter)
+    flow_status.set_defaults(func=cmd_flow_status)
+    flow_test = flow_sub.add_parser("test", help="Test reading per-device cloud edges from the router", formatter_class=HomeGuardHelpFormatter)
+    flow_test.set_defaults(func=cmd_flow_test)
+    flow_set = flow_sub.add_parser("set", help="Configure the router flow source", formatter_class=HomeGuardHelpFormatter)
+    flow_set.add_argument("--host", default=None, help="Router IP/hostname")
+    flow_set.add_argument("--user", default=None, help="SSH user (default: root)")
+    flow_set.add_argument("--port", type=int, default=None, help="SSH port (default: 22)")
+    flow_set.add_argument("--key-path", dest="key_path", default=None, help="Path to the SSH private key")
+    flow_set.add_argument("--key-env", dest="key_env", default=None, help="Name of an env var holding the SSH key path")
+    flow_set.add_argument("--enable", action="store_true", help="Enable per-device cloud edges on the map")
+    flow_set.add_argument("--disable", action="store_true", help="Disable per-device cloud edges")
+    flow_set.set_defaults(func=cmd_flow_set)
 
     update_hashes = sub.add_parser(
         "update-hashes",
