@@ -832,6 +832,60 @@ ipcMain.handle("homeguard:ui-prefs-set", async (_event, prefs = {}) => {
   }
 });
 
+function cleanRiskSignature(value) {
+  // Finding signatures are "sig_" + 16 lowercase hex. Restrict so a crafted
+  // value can never reach the CLI as an option or path fragment.
+  const cleaned = cleanString(value, 32).toLowerCase();
+  return /^sig_[0-9a-f]{16}$/.test(cleaned) ? cleaned : "";
+}
+
+ipcMain.handle("homeguard:clear-risk", async (_event, payload = {}) => {
+  payload = isPlainObject(payload) ? payload : {};
+  const signature = cleanRiskSignature(payload.signature);
+  if (!signature) {
+    return { ok: false, message: "Invalid risk signature." };
+  }
+  const args = ["--json", "clear-risk", signature];
+  // Title is cosmetic for the cleared list; strip leading dashes so it is never
+  // parsed as an option, and pass it as a separate argv element (no shell).
+  const title = cleanString(payload.title || "", 120).replace(/^[-\s]+/, "");
+  if (title) {
+    args.push("--title", title);
+  }
+  try {
+    const result = await runHomeGuard(args);
+    const parsed = parseJsonStdout(result.stdout) || {};
+    return { ok: Boolean(parsed.ok), cleared: Array.isArray(parsed.cleared) ? parsed.cleared : [] };
+  } catch (error) {
+    return { ok: false, message: cleanString(error.message || "Could not clear risk.", 200) };
+  }
+});
+
+ipcMain.handle("homeguard:restore-risk", async (_event, payload = {}) => {
+  payload = isPlainObject(payload) ? payload : {};
+  const signature = cleanRiskSignature(payload.signature);
+  if (!signature) {
+    return { ok: false, message: "Invalid risk signature." };
+  }
+  try {
+    const result = await runHomeGuard(["--json", "restore-risk", signature]);
+    const parsed = parseJsonStdout(result.stdout) || {};
+    return { ok: Boolean(parsed.ok), cleared: Array.isArray(parsed.cleared) ? parsed.cleared : [] };
+  } catch (error) {
+    return { ok: false, message: cleanString(error.message || "Could not restore risk.", 200) };
+  }
+});
+
+ipcMain.handle("homeguard:cleared-risks", async () => {
+  try {
+    const result = await runHomeGuard(["--json", "cleared-risks"]);
+    const parsed = parseJsonStdout(result.stdout) || {};
+    return { ok: true, cleared: Array.isArray(parsed.cleared) ? parsed.cleared : [] };
+  } catch (error) {
+    return { ok: false, cleared: [], message: cleanString(error.message || "", 200) };
+  }
+});
+
 ipcMain.handle("homeguard:history", async () => {
   const result = await runHomeGuard(["history", "--limit", "10"]);
   return { stdout: scrubText(result.stdout) };

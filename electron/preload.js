@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld("homeguard", {
     get: () => ipcRenderer.invoke("homeguard:ui-prefs"),
     set: (prefs) => ipcRenderer.invoke("homeguard:ui-prefs-set", prefs),
   },
+  risks: {
+    clear: (payload) => ipcRenderer.invoke("homeguard:clear-risk", payload),
+    restore: (payload) => ipcRenderer.invoke("homeguard:restore-risk", payload),
+    listCleared: () => ipcRenderer.invoke("homeguard:cleared-risks"),
+  },
   latestReport: () => ipcRenderer.invoke("homeguard:latest-report"),
   history: () => ipcRenderer.invoke("homeguard:history"),
   devices: () => ipcRenderer.invoke("homeguard:devices"),

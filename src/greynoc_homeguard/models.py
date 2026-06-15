@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +10,53 @@ from .guidance import REPORT_DISCLAIMER, priority_actions
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# Evidence keys, in priority order, used as the *stable* identifying part of a
+# finding's signature. Deliberately excludes volatile values like
+# ``definitions_version``, the full ``open_ports`` list, ``pid``, and timestamps.
+_SIGNATURE_EVIDENCE_KEYS = (
+    "path",
+    "command",
+    "matched_artifact",
+    "matched_name",
+    "process_name",
+    "name",
+    "cve_id",
+    "port",
+    "service",
+    "fingerprint",
+    "mac_address",
+    "matched_pattern",
+    "matched_prefix",
+    "hostname",
+)
+
+
+def finding_signature(finding: Any) -> str:
+    """Stable, mostly-unique identity for a finding across scans.
+
+    Unlike ``finding_id`` (which hashes volatile evidence such as
+    ``definitions_version`` or the full open-port list, and is even random for
+    endpoint findings), this keys on the rule, the device, and the single most
+    identifying *stable* piece of evidence (a file path, a port, a CVE id, a
+    device fingerprint). That lets a user "clear" a risk and have it stay
+    cleared on later scans even after definitions update. The discriminator is
+    hashed, so no raw path/host ever appears in the signature itself.
+    """
+
+    rule_id = str(getattr(finding, "rule_id", "") or "")
+    device = str(getattr(finding, "device_ip", "") or "")
+    evidence = getattr(finding, "evidence", {}) or {}
+    discriminator = ""
+    if isinstance(evidence, dict):
+        for key in _SIGNATURE_EVIDENCE_KEYS:
+            value = evidence.get(key)
+            if value not in (None, "", 0):
+                discriminator = f"{key}={value}"
+                break
+    material = f"{rule_id}|{device}|{discriminator}"
+    return "sig_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass(slots=True)
@@ -104,6 +152,8 @@ class Finding:
             "recommended_actions": list(self.recommended_actions),
             "evidence": dict(self.evidence),
             "created_at": self.created_at,
+            # Stable cross-scan identity used by the "clear risk" feature.
+            "signature": finding_signature(self),
         }
 
 

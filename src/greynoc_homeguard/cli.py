@@ -777,6 +777,55 @@ def cmd_ui_prefs_set(args: argparse.Namespace) -> int:
     return cmd_ui_prefs(args)
 
 
+def cmd_clear_risk(args: argparse.Namespace) -> int:
+    """Clear (dismiss) a risk by its stable signature so it is not re-flagged."""
+    settings = AppSettings().load()
+    ok = settings.clear_finding(
+        args.signature,
+        title=getattr(args, "title", "") or "",
+        device=getattr(args, "device", "") or "",
+    )
+    if _JSON_MODE:
+        _emit_json({"ok": ok, "signature": args.signature, "cleared": settings.cleared_findings_list()})
+        return 0 if ok else 2
+    if ok:
+        _ok(f"Risk cleared and will stay cleared on future scans: {args.signature}")
+        return 0
+    print("error: a finding signature is required.", file=sys.stderr)
+    return 2
+
+
+def cmd_restore_risk(args: argparse.Namespace) -> int:
+    """Restore a previously cleared risk so it is flagged again."""
+    settings = AppSettings().load()
+    ok = settings.restore_finding(args.signature)
+    if _JSON_MODE:
+        _emit_json({"ok": ok, "signature": args.signature, "cleared": settings.cleared_findings_list()})
+        return 0
+    if ok:
+        _ok(f"Risk restored; it will be flagged again on the next scan: {args.signature}")
+    else:
+        print(_muted("  That signature is not in the cleared list."))
+    return 0
+
+
+def cmd_cleared_risks(_args: argparse.Namespace) -> int:
+    """List risks the user has cleared."""
+    cleared = AppSettings().load().cleared_findings_list()
+    if _JSON_MODE:
+        _emit_json({"cleared": cleared})
+        return 0
+    if not cleared:
+        print(_muted("  No cleared risks."))
+        return 0
+    _table(
+        ["signature", "title", "cleared_at"],
+        [[row.get("signature"), row.get("title") or "-", row.get("cleared_at") or "-"] for row in cleared],
+        max_cell=40,
+    )
+    return 0
+
+
 def cmd_update_hashes(args: argparse.Namespace) -> int:
     """Download/apply a cryptographically-signed malware hash feed."""
     settings = AppSettings().load()
@@ -1418,6 +1467,19 @@ def build_parser() -> argparse.ArgumentParser:
     ui_prefs_set.add_argument("--chat-bubble", dest="chat_bubble", choices=["on", "off"], default=None, help="Show the floating chat bubble")
     ui_prefs_set.add_argument("--weather-greeting", dest="weather_greeting", choices=["on", "off"], default=None, help="Show the local weather greeting (opt-in)")
     ui_prefs_set.set_defaults(func=cmd_ui_prefs_set)
+
+    clear_risk = sub.add_parser("clear-risk", help="Clear a risk so it is not flagged on future scans", formatter_class=HomeGuardHelpFormatter)
+    clear_risk.add_argument("signature", help="Stable finding signature (sig_...)")
+    clear_risk.add_argument("--title", default="", help="Optional label for the cleared risk")
+    clear_risk.add_argument("--device", default="", help="Optional device label for the cleared risk")
+    clear_risk.set_defaults(func=cmd_clear_risk)
+
+    restore_risk = sub.add_parser("restore-risk", help="Restore a previously cleared risk", formatter_class=HomeGuardHelpFormatter)
+    restore_risk.add_argument("signature", help="Stable finding signature (sig_...)")
+    restore_risk.set_defaults(func=cmd_restore_risk)
+
+    cleared_risks = sub.add_parser("cleared-risks", help="List risks you have cleared", formatter_class=HomeGuardHelpFormatter)
+    cleared_risks.set_defaults(func=cmd_cleared_risks)
 
     update_hashes = sub.add_parser(
         "update-hashes",
