@@ -48,13 +48,17 @@ jobs:
             $tagName = $env:INPUT_TAG_NAME
           } else {
             $tagName = $env:REF_NAME
-            $version = $tagName -replace '^v', ''
+            $version = ($tagName -replace '^v', '') -replace '-.*$', ''
           }
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Version must be semantic version X.Y.Z. Got: $version"
           }
-          if ($tagName -notmatch '^v\d+\.\d+\.\d+$') {
-            throw "Tag must look like vX.Y.Z. Got: $tagName"
+          # Allow an optional suffix, e.g. v1.6.0-portable: GitHub immutable
+          # releases lock a tag once it has hosted a release, so a binary build
+          # published alongside (or after) a source tag uses a distinct -suffix
+          # tag. The numeric version above is still X.Y.Z (suffix stripped).
+          if ($tagName -notmatch '^v\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$') {
+            throw "Tag must look like vX.Y.Z or vX.Y.Z-suffix. Got: $tagName"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag_name=$tagName" >> $env:GITHUB_OUTPUT
@@ -209,12 +213,9 @@ jobs:
           }
           $notes = "Windows release for HomeGuard v$version.`n`n$signingLine`n`nAssets:`n- HomeGuard-Setup-v$version.exe installer`n- HomeGuard-Portable-v$version.exe portable executable`n- SHA256SUMS.txt checksums"
           $assets = @("${{ steps.assets.outputs.installer }}", "${{ steps.assets.outputs.portable }}", "${{ steps.assets.outputs.checksums }}")
-          # GitHub releases here are immutable (assets cannot be added or
-          # clobbered after publish), so refresh by deleting and recreating with
-          # the freshly built assets. The git tag is preserved (no --cleanup-tag).
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag exists; recreating it with fresh assets."
-            gh release delete $tag --yes
-          }
+          # GitHub releases here are immutable: a tag can host exactly one
+          # release, permanently. Create it once with the assets attached. If
+          # the tag was already published, this fails clearly (HTTP 422) so the
+          # operator publishes under a new tag (e.g. vX.Y.Z-portable) rather
+          # than silently doing nothing.
           gh release create $tag @assets --title "HomeGuard v$version" --notes $notes --verify-tag
