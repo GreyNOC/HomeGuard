@@ -172,8 +172,6 @@ def priority_actions(report: Any) -> list[dict[str, Any]]:
     for group in _ACTION_GROUPS:
         key = group["key"]
         if key == "keep_definitions_current":
-            rank = _SEVERITY_RANK["medium"] if definitions_stale else _SEVERITY_RANK["info"]
-            ranked.append((rank, _GROUP_ORDER[key], {**group, "count": 0}))
             continue
         count = counts.get(key, 0)
         if count <= 0:
@@ -181,7 +179,19 @@ def priority_actions(report: Any) -> list[dict[str, Any]]:
         ranked.append((worst.get(key, 0), _GROUP_ORDER[key], {**group, "count": count}))
 
     ranked.sort(key=lambda item: (-item[0], item[1]))
-    return [
+    actions = [
         {"action": entry["action"], "detail": entry["detail"], "count": entry["count"]}
         for _, _, entry in ranked
     ]
+
+    # The definitions reminder is always appended last so the list closes on a
+    # calm maintenance step, regardless of how the finding-derived groups rank.
+    reminder = next(group for group in _ACTION_GROUPS if group["key"] == "keep_definitions_current")
+    reminder_detail = reminder["detail"]
+    if definitions_stale:
+        reminder_detail = (
+            "Your security definitions look out of date -- run Update Definitions to pull the "
+            "latest CVE and security rules."
+        )
+    actions.append({"action": reminder["action"], "detail": reminder_detail, "count": 0})
+    return actions

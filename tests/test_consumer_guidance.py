@@ -95,10 +95,15 @@ class PriorityActionTests(unittest.TestCase):
         actions = priority_actions(report)
         self.assertEqual([a["action"] for a in actions], ["Keep security definitions current"])
 
-    def test_definitions_reminder_always_present(self):
+    def test_definitions_reminder_is_always_last(self):
+        # Even when definitions are stale (which previously floated the reminder
+        # above info-severity finding groups), the maintenance step closes the
+        # list so the guidance always ends on a calm note.
         report = _quarantined_report()
         actions = priority_actions(report)
-        self.assertIn("Keep security definitions current", [a["action"] for a in actions])
+        names = [a["action"] for a in actions]
+        self.assertIn("Keep security definitions current", names)
+        self.assertEqual(names[-1], "Keep security definitions current")
 
 
 class ReportDisclaimerTests(unittest.TestCase):
