@@ -175,13 +175,13 @@ powershell -NoProfile -File scripts\build_windows_installer.ps1
 Expected artifact for the current release:
 
 ```text
-dist\installer\HomeGuard-Setup-v1.5.0.exe
+dist\installer\HomeGuard-Setup-vX.Y.Z.exe
 ```
 
 Verify before publishing:
 
 ```powershell
-powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.5.0.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-vX.Y.Z.exe -ExpectedPublisher GreyNOC
 ```
 
 See `docs/release/BUILD_AND_SIGNING.md` and `docs/release/RELEASE_CHECKLIST.md` for the full release gate.

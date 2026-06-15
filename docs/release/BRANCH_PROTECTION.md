@@ -11,7 +11,7 @@ gated state. Configure them under
 Apply identical protection to:
 
 - `main`
-- `release/*` (e.g. `release/v1.5.0`)
+- `release/*` (e.g. `release/vX.Y.Z`)
 
 ## Required rules
 

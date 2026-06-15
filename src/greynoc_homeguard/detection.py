@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from .baseline import BaselineStore
 from .definitions import match_kev_catalog, match_product_hints, risky_ports_from_definitions
+from .guidance import QUARANTINE_NOTE, with_indicator_note
 from .models import Device, Finding
 
 SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
@@ -389,7 +390,7 @@ class HomeGuardDetectionEngine:
                 device=device,
                 plain_english=(
                     f"You marked {name} ({device.ip}) as quarantined in HomeGuard. "
-                    "It is currently active on your home network."
+                    "It is currently active on your home network. " + QUARANTINE_NOTE
                 ),
                 recommended_actions=[
                     "Block this device from your router or change the WiFi password.",
@@ -438,7 +439,7 @@ class HomeGuardDetectionEngine:
                 confidence=rule.confidence,
                 category=rule.category,
                 device=device,
-                plain_english=(
+                plain_english=with_indicator_note(
                     f"HomeGuard previously saw a device named {name} at {stored_ip or 'a different IP'}. "
                     f"It is now active at {device.ip}, which can happen if you replaced the device or its IP "
                     "address rotated, but it is also one of the clearest signs of an unknown device on your "
@@ -511,7 +512,7 @@ class HomeGuardDetectionEngine:
                 confidence=rule.confidence,
                 category=rule.category,
                 device=device,
-                plain_english=(
+                plain_english=with_indicator_note(
                     f"{name} is not in your known-device list and has remote-access or file-sharing service(s) "
                     f"reachable on port(s) {', '.join(str(port) for port in exposed)}. This can be a normal new computer, "
                     "but it is also one of the clearest home-network indicators of an unauthorized device."
@@ -554,7 +555,7 @@ class HomeGuardDetectionEngine:
                 confidence=rule.confidence if not trusted else max(0.4, rule.confidence - 0.18),
                 category=rule.category,
                 device=device,
-                plain_english=(
+                plain_english=with_indicator_note(
                     f"{name} has several administration or sharing services reachable. Attackers often look for this kind "
                     "of surface after joining a network, and misconfigured home devices can expose it accidentally."
                 ),
@@ -649,7 +650,7 @@ class HomeGuardDetectionEngine:
                 confidence=rule.confidence,
                 category=rule.category,
                 device=device,
-                plain_english=f"{name} has {service} open on port {port}. {why}",
+                plain_english=with_indicator_note(f"{name} has {service} open on port {port}. {why}"),
                 recommended_actions=[
                     "Confirm what device this is and whether the service is expected.",
                     "Disable the service if you do not use it.",
@@ -728,7 +729,9 @@ class HomeGuardDetectionEngine:
                     confidence=rule.confidence,
                     category=rule.category,
                     device=device,
-                    plain_english=str(hint.get("plain_english") or "A local security definition matched this device profile."),
+                    plain_english=with_indicator_note(
+                        str(hint.get("plain_english") or "A local security definition matched this device profile.")
+                    ),
                     recommended_actions=[
                         str(item) for item in (hint.get("recommended_actions") or ["Review this device and keep it updated."])
                     ],

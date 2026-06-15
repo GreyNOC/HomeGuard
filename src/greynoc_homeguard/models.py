@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from .guidance import REPORT_DISCLAIMER, priority_actions
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -128,4 +130,9 @@ class HomeGuardReport:
             "findings": [finding.as_dict() for finding in self.findings],
             "next_steps": list(self.next_steps),
             "scan_metadata": dict(self.scan_metadata),
+            # Additive, backward-compatible consumer-guidance fields. Existing
+            # keys are unchanged; readers that do not know these simply ignore
+            # them. Both are derived from data already present on the report.
+            "disclaimer": REPORT_DISCLAIMER,
+            "priority_actions": priority_actions(self),
         }

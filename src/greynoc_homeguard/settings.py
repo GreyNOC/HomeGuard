@@ -60,6 +60,14 @@ class AppSettings:
                 "key_env": "",
                 "key_path": "",
             },
+            "ui": {
+                # Desktop UI preferences. The floating chat bubble is on by
+                # default; the weather greeting is opt-in and stays off unless
+                # the user enables it (and HomeGuard never fetches weather while
+                # it is off -- see docs).
+                "show_chat_bubble": True,
+                "show_weather_greeting": False,
+            },
             "ignored_findings": {},
         }
 
@@ -94,6 +102,9 @@ class AppSettings:
         flow_source = dict(defaults["flow_source"])
         flow_source.update(loaded.get("flow_source") if isinstance(loaded.get("flow_source"), dict) else {})
         self.data["flow_source"] = flow_source
+        ui = dict(defaults["ui"])
+        ui.update(loaded.get("ui") if isinstance(loaded.get("ui"), dict) else {})
+        self.data["ui"] = ui
         ignored = loaded.get("ignored_findings") if isinstance(loaded.get("ignored_findings"), dict) else {}
         self.data["ignored_findings"] = ignored
         return self
@@ -135,6 +146,28 @@ class AppSettings:
             "probe_all": bool(probe_all),
         }
         self.save()
+
+    def ui_prefs(self) -> dict[str, bool]:
+        prefs = self.data.get("ui") if isinstance(self.data.get("ui"), dict) else {}
+        return {
+            "show_chat_bubble": bool(prefs.get("show_chat_bubble", True)),
+            "show_weather_greeting": bool(prefs.get("show_weather_greeting", False)),
+        }
+
+    def set_ui_prefs(
+        self,
+        *,
+        show_chat_bubble: bool | None = None,
+        show_weather_greeting: bool | None = None,
+    ) -> dict[str, bool]:
+        prefs = self.ui_prefs()
+        if show_chat_bubble is not None:
+            prefs["show_chat_bubble"] = bool(show_chat_bubble)
+        if show_weather_greeting is not None:
+            prefs["show_weather_greeting"] = bool(show_weather_greeting)
+        self.data["ui"] = prefs
+        self.save()
+        return prefs
 
     def realtime_config(self) -> dict[str, Any]:
         cfg = self.data.get("realtime") if isinstance(self.data.get("realtime"), dict) else {}

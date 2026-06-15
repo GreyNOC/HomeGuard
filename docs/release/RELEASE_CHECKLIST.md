@@ -1,11 +1,13 @@
 # HomeGuard Release Checklist
 
-Release artifact: `HomeGuard-Setup-v1.5.0.exe`
+Release artifact: `HomeGuard-Setup-v<version>.exe`, where `<version>` is read
+from `pyproject.toml` (currently `1.8.0`).
 
 The build, signing, and release-gate scripts derive the version from
 `pyproject.toml` when no `-Version` / `-InstallerPath` is passed, so the
-commands below stay correct as the project version moves forward. Where an
-explicit version is helpful, the current production release is `1.5.0`.
+commands below stay correct as the project version moves forward. Any explicit
+version shown below (for example `vX.Y.Z`) is illustrative only; the current
+project version is `1.8.0` (see `pyproject.toml`).
 
 ## Required CI Gate
 
@@ -40,7 +42,7 @@ powershell -NoProfile -File scripts\release_gate.ps1
 If you need to gate a specific artifact path, pass it explicitly:
 
 ```powershell
-powershell -NoProfile -File scripts\release_gate.ps1 -InstallerPath dist\installer\HomeGuard-Setup-v1.5.0.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\release_gate.ps1 -InstallerPath dist\installer\HomeGuard-Setup-vX.Y.Z.exe -ExpectedPublisher GreyNOC
 ```
 
 The release is not ready unless all items pass:
@@ -79,7 +81,7 @@ powershell -NoProfile -File scripts\build_windows_installer.ps1
 Verify signature (current release):
 
 ```powershell
-powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.5.0.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-vX.Y.Z.exe -ExpectedPublisher GreyNOC
 ```
 
 Run local security preflight:
@@ -96,16 +98,17 @@ python -m unittest discover -s tests -v
 
 ## Production Release Procedure
 
-Use this exact flow for a signed production v1.5.0 release. Do not skip
+Use this exact flow for a signed production vX.Y.Z release (substitute the
+version from `pyproject.toml`). Do not skip
 steps and do not commit anything inside `dist\`, signing logs, or any
 certificate material.
 
 1. **Cut release branch**
    ```powershell
-   git checkout -b release/v1.5.0
+   git checkout -b release/vX.Y.Z
    ```
 2. **Confirm Security Gates passes on the release branch.** The
-   `Security Gates` workflow run on `release/v1.5.0` (push or
+   `Security Gates` workflow run on `release/vX.Y.Z` (push or
    workflow_dispatch) must be green.
 3. **Prepare the clean Windows release workstation.** Use a clean
    Windows 10 or Windows 11 build host with:
@@ -131,11 +134,11 @@ certificate material.
    ```
 7. **Verify the final artifact exists.**
    ```text
-   dist\installer\HomeGuard-Setup-v1.5.0.exe
+   dist\installer\HomeGuard-Setup-vX.Y.Z.exe
    ```
 8. **Record the SHA-256 checksum.**
    ```powershell
-   Get-FileHash -Algorithm SHA256 dist\installer\HomeGuard-Setup-v1.5.0.exe
+   Get-FileHash -Algorithm SHA256 dist\installer\HomeGuard-Setup-vX.Y.Z.exe
    ```
    Save the value in the release notes; do not commit signing or hash
    logs from the build host.
@@ -154,8 +157,8 @@ certificate material.
     - Admin relaunch is user-triggered only.
 11. **Create the signed git tag.**
     ```powershell
-    git tag -s v1.5.0 -m "HomeGuard v1.5.0"
-    git push origin v1.5.0
+    git tag -s vX.Y.Z -m "HomeGuard vX.Y.Z"
+    git push origin vX.Y.Z
     ```
 12. **Publish release notes that match the exact signed artifact and
     SHA-256 checksum.** Attach only the signed installer (and matching
