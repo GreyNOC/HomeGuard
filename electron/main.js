@@ -6,6 +6,7 @@ const { pathToFileURL } = require("url");
 const zlib = require("zlib");
 const { registerReportAssistantIpc } = require("./report_assistant_ipc");
 const { registerAiBridgeIpc } = require("./ai_bridge_ipc");
+const { scrubText, maskIdentifier, scrubObject } = require("./privacy_utils");
 
 const repoRoot = path.resolve(__dirname, "..");
 let mainWindow = null;
@@ -67,37 +68,6 @@ function parseKeyValueOutput(stdout) {
     }
   }
   return result;
-}
-
-function scrubText(value) {
-  return String(value ?? "")
-    .replace(/[A-Za-z]:\\Users\\[^\\\r\n\t"'<>]+(?:\\[^\\\r\n\t"'<>]*)*/gi, "local app data")
-    .replace(/[^ \r\n\t"'<>]*AppData[^ \r\n\t"'<>]*/gi, "local app data")
-    .replace(/\/Users\/[^/\s"'<>]+(?:\/[^/\s"'<>]+)*/gi, "local app data")
-    .replace(/\b(HOME|USERNAME|USERPROFILE|LOCALAPPDATA|APPDATA)=\S+/gi, "redacted")
-    .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/gi, "redacted")
-    .replace(/\b(token|api[_-]?key|password|secret|credential)s?\b\s*[:=]\s*[^\s,;]+/gi, "redacted")
-    .replace(/\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b/gi, (value) => maskIdentifier(value));
-}
-
-function maskIdentifier(value) {
-  const text = String(value ?? "");
-  const match = text.match(/\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b/i);
-  if (!match) {
-    return text;
-  }
-  const parts = match[0].toLowerCase().split(":");
-  return `device id ending ${parts.at(-2)}:${parts.at(-1)}`;
-}
-
-function scrubObject(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => scrubObject(item));
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrubObject(item)]));
-  }
-  return typeof value === "string" ? scrubText(value) : value;
 }
 
 function isPlainObject(value) {

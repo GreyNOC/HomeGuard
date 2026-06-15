@@ -23,6 +23,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from .guidance import QUARANTINE_NOTE, REPORT_DISCLAIMER, priority_actions
 from .models import HomeGuardReport
 from .privacy import assert_share_safe, scrub_report
 
@@ -94,10 +95,21 @@ def render_markdown(report: HomeGuardReport) -> str:
     lines.append(f"Created: `{report.created_at}`")
     lines.append(f"Overall risk: `{report.overall_risk}` ({report.overall_score})")
     lines.append("")
+    lines.append(f"> {REPORT_DISCLAIMER}")
+    lines.append("")
     lines.append("## Executive Summary")
     lines.append("")
     lines.append(report.summary)
     lines.append("")
+    priority = priority_actions(report)
+    if priority:
+        lines.append("## What To Do First")
+        lines.append("")
+        for index, item in enumerate(priority, start=1):
+            count = item.get("count") or 0
+            suffix = f" ({count})" if count else ""
+            lines.append(f"{index}. **{item['action']}**{suffix} - {item['detail']}")
+        lines.append("")
     lines.append("## Protection Status")
     lines.append("")
     lines.append(f"- **Network Protection:** {cards['network'].get('value')} - {cards['network'].get('detail', '')}")
@@ -273,8 +285,7 @@ def render_html(report: HomeGuardReport) -> str:
             "<h2>Quarantined / Blocked Devices</h2>"
             "<table><thead><tr><th>Name</th><th>IP</th><th>Device ID</th><th>Owner</th><th>Type</th><th>Active in scan</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
-            "<p class=\"meta\">Quarantine flags devices in GreyNOC reports. To actually block traffic, "
-            "remove the device from your router or change the WiFi password.</p>"
+            f"<p class=\"meta\">{html.escape(QUARANTINE_NOTE)}</p>"
             "</section>"
         )
 
@@ -410,6 +421,24 @@ def render_html(report: HomeGuardReport) -> str:
             for name, version in feed_versions.items()
         ) + "</ul>"
 
+    priority = priority_actions(report)
+    actions_html = ""
+    if priority:
+        action_items = "".join(
+            "<li><b>"
+            + html.escape(str(item["action"]))
+            + "</b>"
+            + (f" <span class=\"meta\">({item['count']} to review)</span>" if item.get("count") else "")
+            + "<br>"
+            + html.escape(str(item["detail"]))
+            + "</li>"
+            for item in priority
+        )
+        actions_html = (
+            "<section class=\"panel\"><h2>What to do first</h2>"
+            f"<ol class=\"first-steps\">{action_items}</ol></section>"
+        )
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -450,6 +479,10 @@ header {{ background: linear-gradient(180deg, #04182B, #03101D); color: #F4FBFF;
 .brand-title {{ letter-spacing:.08em; text-transform:uppercase; font-weight:800; font-size:13px; opacity:.92; }}
 h1 {{ margin: 0 0 10px; font-size: 38px; color: #F4FBFF; }}
 header p {{ max-width: 900px; line-height:1.55; color:#A8C8DC; }}
+header .disclaimer {{ margin-top:14px; max-width:900px; font-size:13.5px; color:#C8E9F7; border-left:3px solid #0B91FF; padding-left:12px; }}
+.first-steps {{ margin:0; padding-left:22px; }}
+.first-steps li {{ margin-bottom:10px; color:#D8F3FF; }}
+.first-steps b {{ color:#F4FBFF; }}
 main {{ max-width: 1120px; margin: -58px auto 0; padding: 24px; }}
 .actions {{ display:flex; flex-wrap:wrap; gap:10px; margin:0 0 18px; }}
 .actions .action {{ border:1px solid #91F6FF; text-decoration:none; cursor:pointer; background:#0B91FF; color:#02111F; border-radius:6px; padding:10px 14px; font-weight:800; font-size:14px; }}
@@ -493,6 +526,7 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
   <div class="brand"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div><div><div class="brand-title">GreyNOC</div><div>HomeGuard Risk Review Report</div></div></div>
   <h1>Home Security Report</h1>
   <p>{html.escape(report.summary)}</p>
+  <p class="disclaimer">{html.escape(REPORT_DISCLAIMER)}</p>
 </header>
 <main>
   <nav class="actions" aria-label="Report downloads">
@@ -516,6 +550,8 @@ details pre {{ white-space: pre-wrap; overflow:auto; max-height: 460px; backgrou
     <div class="metric"><small>OVERALL RISK</small><b>{html.escape(report.overall_risk.upper())}</b></div>
     <div class="metric"><small>SCORE</small><b>{report.overall_score}</b></div>
   </section>
+
+  {actions_html}
 
   <section class="panel">
     <div class="card-head"><h3>Security definitions</h3><span>{html.escape(str(def_status.get('definitions_version', 'unknown')))}</span></div>
@@ -824,6 +860,21 @@ def write_pdf(path: Path, report: HomeGuardReport) -> None:
     # ---- Executive summary ----
     story.append(Paragraph("Executive Summary", styles["h2"]))
     story.append(Paragraph(html.escape(report.summary), styles["body"]))
+    story.append(Paragraph(html.escape(REPORT_DISCLAIMER), styles["small"]))
+
+    # ---- What to do first ----
+    priority = priority_actions(report)
+    if priority:
+        story.append(Paragraph("What To Do First", styles["h2"]))
+        for index, item in enumerate(priority, start=1):
+            count = item.get("count") or 0
+            suffix = f" ({count})" if count else ""
+            story.append(
+                Paragraph(
+                    f"{index}. <b>{html.escape(str(item['action']))}</b>{suffix} - {html.escape(str(item['detail']))}",
+                    styles["body"],
+                )
+            )
 
     # ---- Numeric metrics row ----
     metrics = Table(

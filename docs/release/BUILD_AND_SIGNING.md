@@ -4,7 +4,8 @@ Windows production releases are built as a PyInstaller application folder and
 packaged with Inno Setup into a signed setup executable. The build and
 release-gate scripts both read the current project version from
 `pyproject.toml`, so most commands do not need a hardcoded version. Where an
-explicit version is useful, the current production release is `1.5.0`.
+explicit version is useful, the current project version is `1.8.0` (see
+`pyproject.toml`); version strings such as `vX.Y.Z` below are examples.
 
 ## Required Local Tools
 
@@ -45,7 +46,7 @@ powershell -NoProfile -File scripts\build_windows_installer.ps1
 Expected final artifact for the current release:
 
 ```text
-dist\installer\HomeGuard-Setup-v1.5.0.exe
+dist\installer\HomeGuard-Setup-vX.Y.Z.exe
 ```
 
 The build fails if:
@@ -70,7 +71,7 @@ powershell -NoProfile -File scripts\build_windows_installer.ps1 -Unsigned
 ## Verify Installer Signature
 
 ```powershell
-powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-v1.5.0.exe -ExpectedPublisher GreyNOC
+powershell -NoProfile -File scripts\verify_windows_signature.ps1 -Path dist\installer\HomeGuard-Setup-vX.Y.Z.exe -ExpectedPublisher GreyNOC
 ```
 
 Do not publish the installer unless this command succeeds.
