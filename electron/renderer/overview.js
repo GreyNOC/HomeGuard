@@ -99,16 +99,26 @@
     return null;
   }
 
+  // The Overview is scoped to THIS computer: the backend attaches a
+  // "this_device" summary (its own findings, risk, and open services) to the
+  // report's scan_metadata. We prefer it everywhere; older reports without it
+  // fall back to a clear "rescan" state rather than showing network-wide data.
+  function thisDevice(report) {
+    const td = report && report.scan_metadata && report.scan_metadata.this_device;
+    return td && typeof td === "object" ? td : null;
+  }
+
   function renderGreeting(report) {
     setText("ovGreeting", greetingForHour(new Date().getHours()));
     let subtext;
+    const td = thisDevice(report);
     if (state.scanning) {
-      subtext = "Scanning your network now.";
+      subtext = "Scanning this computer now.";
     } else if (!report) {
-      subtext = "Run your first scan to check your home network.";
+      subtext = "Run your first scan to check this computer.";
     } else {
-      const risk = String(report.overall_risk || "").toLowerCase();
-      subtext = RISKY_RISK.has(risk) ? "A few items need your review." : "Your network is protected.";
+      const risk = String((td ? td.overall_risk : report.overall_risk) || "").toLowerCase();
+      subtext = RISKY_RISK.has(risk) ? "A few items on this computer need your review." : "This computer is protected.";
     }
     setText("ovSubtext", subtext);
   }
@@ -119,23 +129,29 @@
       setText("ovRiskDetail", "Run your first scan");
       return;
     }
-    const risk = String(report.overall_risk || "unknown");
+    const td = thisDevice(report);
+    const risk = String((td ? td.overall_risk : report.overall_risk) || "unknown");
     setText("ovRiskValue", risk.charAt(0).toUpperCase() + risk.slice(1));
-    const score = Number(report.overall_score || 0);
+    const score = Number((td ? td.overall_score : report.overall_score) || 0);
     setText("ovRiskDetail", RISKY_RISK.has(risk.toLowerCase()) ? `Score ${score} - review recommended` : "No urgent issues");
   }
 
-  function renderDevicesCard(report, devicesResult) {
-    const rows = devicesResult && Array.isArray(devicesResult.devices) ? devicesResult.devices : [];
-    const count = report ? Number(report.device_count || rows.length || 0) : rows.length;
-    if (!report && !rows.length) {
+  // Replaces the network device count with THIS computer's exposed services.
+  function renderServicesCard(report) {
+    if (!report) {
       setText("ovDeviceCount", "-");
       setText("ovDeviceDetail", "Run a scan to see this");
       return;
     }
+    const td = thisDevice(report);
+    if (!td) {
+      setText("ovDeviceCount", "-");
+      setText("ovDeviceDetail", "Rescan to see this computer's services");
+      return;
+    }
+    const count = Number(td.open_service_count || 0);
     setText("ovDeviceCount", String(count));
-    const unknown = rows.filter((r) => String(r.trust || "unknown").toLowerCase() === "unknown").length;
-    setText("ovDeviceDetail", unknown ? `${unknown} unknown` : "All recognized");
+    setText("ovDeviceDetail", count ? `${count} reachable on this PC` : "No exposed services");
   }
 
   function findingsBySeverity(report) {
@@ -154,14 +170,15 @@
       setText("ovAlertDetail", "Run a scan to see this");
       return;
     }
-    const total = Number(report.finding_count || (report.findings || []).length || 0);
+    const td = thisDevice(report);
+    const total = td ? Number(td.finding_count || 0) : Number(report.finding_count || (report.findings || []).length || 0);
     setText("ovAlertCount", String(total));
     if (!total) {
       setText("ovAlertDetail", "No active alerts");
       return;
     }
-    const counts = findingsBySeverity(report);
-    const serious = counts.critical + counts.high;
+    const counts = td && td.severity_counts ? td.severity_counts : findingsBySeverity(report);
+    const serious = Number(counts.critical || 0) + Number(counts.high || 0);
     setText("ovAlertDetail", serious ? `${serious} high-priority` : "Review recommended");
   }
 
@@ -204,11 +221,15 @@
       container.appendChild(empty);
       return;
     }
-    // Prefer the grouped priority_actions (action + count); fall back to the
-    // flat next_steps list. Both come straight from the real report.
+    // Prefer this computer's scoped priority_actions; fall back to the report's
+    // grouped actions, then the flat next_steps list. All come from real state.
+    const td = thisDevice(report);
+    const grouped = td && Array.isArray(td.priority_actions) && td.priority_actions.length
+      ? td.priority_actions
+      : report.priority_actions;
     let items = [];
-    if (Array.isArray(report.priority_actions) && report.priority_actions.length) {
-      items = report.priority_actions.map((a) => ({
+    if (Array.isArray(grouped) && grouped.length) {
+      items = grouped.map((a) => ({
         title: String(a.action || ""),
         detail: String(a.detail || ""),
         count: Number(a.count || 0),
@@ -303,9 +324,10 @@
       if (detail) detail.textContent = "Run your first scan";
       return;
     }
-    const risk = String(report.overall_risk || "").toLowerCase();
+    const td = thisDevice(report);
+    const risk = String((td ? td.overall_risk : report.overall_risk) || "").toLowerCase();
     const ok = !RISKY_RISK.has(risk);
-    if (state) state.textContent = ok ? "All systems protected" : "A few items need review";
+    if (state) state.textContent = ok ? "This computer is protected" : "A few items need review";
     const defs = defsResult && defsResult.status ? defsResult.status : {};
     const updated = defs.last_updated || defs.updated_at;
     if (detail) detail.textContent = updated ? `Definitions updated ${relativeTime(updated)}` : "Definitions status unavailable";
@@ -481,7 +503,7 @@
     state.report = report;
     renderGreeting(report);
     renderRiskCard(report);
-    renderDevicesCard(report, data ? data.devices : null);
+    renderServicesCard(report);
     renderAlertsCard(report);
     renderUpdatesCard(report, data ? data.defs : null);
     renderRecommended(report);

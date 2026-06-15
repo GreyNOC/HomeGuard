@@ -9,7 +9,7 @@ from . import __version__
 from .custom_rules import apply_to_definitions, has_any_rules, load_custom_rules
 from .definitions import DefinitionManager
 from .detection import HomeGuardDetectionEngine
-from .models import Device, Finding, HomeGuardReport, utcnow
+from .models import Device, Finding, HomeGuardReport, finding_signature, utcnow
 from .protection import compute_protection_status
 
 
@@ -70,8 +70,22 @@ class HomeGuardEngine:
         *,
         baseline: BaselineStore | None = None,
         scan_metadata: dict[str, Any] | None = None,
+        cleared_signatures: set[str] | None = None,
     ) -> HomeGuardReport:
         findings = self.detection_engine.evaluate(devices, baseline)
+        # Risks the user explicitly cleared are removed before anything is
+        # scored, so overall risk, alerts, protection status, and next-steps all
+        # reflect the cleared state and the same risk is not re-flagged each scan.
+        cleared_set = set(cleared_signatures or ())
+        cleared_findings: list[Finding] = []
+        if cleared_set:
+            active_findings: list[Finding] = []
+            for finding in findings:
+                if finding_signature(finding) in cleared_set:
+                    cleared_findings.append(finding)
+                else:
+                    active_findings.append(finding)
+            findings = active_findings
         overall_score = round(max([finding.risk_score for finding in findings], default=0.0), 2)
         if overall_score >= 70:
             overall_risk = "high"
@@ -94,6 +108,8 @@ class HomeGuardEngine:
         metadata["protection_status"] = protection.as_dict()
         metadata["family_summary"] = family_summary
         metadata["quarantined_devices"] = quarantined
+        metadata["cleared_findings"] = [finding.as_dict() for finding in cleared_findings]
+        metadata["cleared_finding_count"] = len(cleared_findings)
         summary = self._summary(devices, findings, overall_risk, protection)
         return HomeGuardReport(
             report_id=f"hg_report_{uuid4().hex[:12]}",

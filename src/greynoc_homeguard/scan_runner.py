@@ -14,18 +14,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from types import SimpleNamespace
+
 from .baseline import BaselineStore
 from .definitions import DefinitionManager, active_scan_ports
 from .edr.assessment import assess_endpoint_findings
 from .diff import compute_scan_diff, load_previous_report, render_summary
 from .engine import HomeGuardEngine
+from .guidance import priority_actions
 from .history import HistoryEntry, ProtectionHistory
 from .logging_setup import get_logger
-from .models import Finding, HomeGuardReport
+from .models import Finding, HomeGuardReport, finding_signature
 from .network import detect_local_interfaces, discover_lan_hosts_noc_core
 from .paths import default_baseline_path, default_output_dir, latest_report_dir
 from .reports import export_report
 from .scheduler import ScheduleManager
+from .settings import AppSettings
 from .virus_scanner import run_endpoint_malware_scan
 
 LOG = get_logger("scan_runner")
@@ -80,6 +84,58 @@ def _attach_endpoint_scan(report: HomeGuardReport, findings: list[Finding], meta
     )
 
 
+def _partition_cleared(
+    findings: list[Finding], cleared: set[str]
+) -> tuple[list[Finding], list[Finding]]:
+    """Split findings into (active, cleared) by stable signature."""
+    if not cleared:
+        return list(findings), []
+    active: list[Finding] = []
+    removed: list[Finding] = []
+    for finding in findings:
+        (removed if finding_signature(finding) in cleared else active).append(finding)
+    return active, removed
+
+
+def _build_this_device_summary(report: HomeGuardReport, local_ips: set[str]) -> dict[str, Any]:
+    """Summarize only the findings that belong to THIS computer.
+
+    "This device" = findings on a local interface IP plus endpoint/malware
+    findings (which carry the ``local-host`` sentinel device IP). The Overview
+    page uses this so it reflects the user's own machine, not other LAN devices.
+    """
+    local = set(local_ips) | {"local-host"}
+    findings = [finding for finding in report.findings if finding.device_ip in local]
+    score = round(max([finding.risk_score for finding in findings], default=0.0), 2)
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for finding in findings:
+        if finding.severity in severity_counts:
+            severity_counts[finding.severity] += 1
+    local_devices = [device for device in report.devices if device.ip in local_ips]
+    open_services = sorted({port for device in local_devices for port in device.open_ports})
+    device_name = next((device.hostname for device in local_devices if device.hostname), "") or "This PC"
+    # Scope the prioritized guidance to this device's findings only (no other
+    # LAN devices, no network-wide quarantine list).
+    shim = SimpleNamespace(
+        findings=findings,
+        scan_metadata={
+            "definition_status": report.scan_metadata.get("definition_status", {}),
+            "quarantined_devices": [],
+        },
+    )
+    return {
+        "device_name": device_name,
+        "overall_risk": _risk_label(score),
+        "overall_score": score,
+        "finding_count": len(findings),
+        "severity_counts": severity_counts,
+        "open_services": open_services,
+        "open_service_count": len(open_services),
+        "priority_actions": priority_actions(shim),
+        "signatures": [finding_signature(finding) for finding in findings],
+    }
+
+
 def _scan_dir(timestamp: datetime | None = None) -> Path:
     when = (timestamp or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     return default_output_dir() / when
@@ -131,6 +187,7 @@ def run_full_scan(
     _emit(progress, f"Network scan: found {len(devices)} local device(s)")
     _emit(progress, "Loading local known-device trust database")
     baseline = BaselineStore(default_baseline_path()).load()
+    cleared_signatures = AppSettings().load().cleared_signatures()
     metadata: dict[str, Any] = {
         "mode": "active" if active else "passive",
         "discovery_engine": "noc_core",
@@ -140,7 +197,9 @@ def run_full_scan(
     }
     _emit(progress, "Detection engine: evaluating network risk rules")
     engine = HomeGuardEngine()
-    report = engine.build_report(devices, baseline=baseline, scan_metadata=metadata)
+    report = engine.build_report(
+        devices, baseline=baseline, scan_metadata=metadata, cleared_signatures=cleared_signatures
+    )
     _emit(progress, f"Detection engine: emitted {len(report.findings)} network finding(s)")
 
     # Compute "what changed since last scan" using the previous report's
@@ -160,8 +219,19 @@ def run_full_scan(
         endpoint_findings_for_assessment: list[Finding] = []
         try:
             endpoint = run_endpoint_malware_scan(progress=progress)
-            _attach_endpoint_scan(report, endpoint.findings, endpoint.metadata)
-            endpoint_findings_for_assessment = list(endpoint.findings or [])
+            # Drop endpoint findings the user has cleared so they are not
+            # re-flagged each scan (and do not drive the EDR assessment).
+            active_endpoint, cleared_endpoint = _partition_cleared(
+                list(endpoint.findings or []), cleared_signatures
+            )
+            _attach_endpoint_scan(report, active_endpoint, endpoint.metadata)
+            endpoint_findings_for_assessment = list(active_endpoint)
+            if cleared_endpoint:
+                existing = report.scan_metadata.get("cleared_findings")
+                existing = list(existing) if isinstance(existing, list) else []
+                existing.extend(finding.as_dict() for finding in cleared_endpoint)
+                report.scan_metadata["cleared_findings"] = existing
+                report.scan_metadata["cleared_finding_count"] = len(existing)
         except Exception as exc:
             LOG.error("Endpoint malware scan failed: %s", exc)
             report.scan_metadata["endpoint_malware_scan"] = {
@@ -195,6 +265,12 @@ def run_full_scan(
             "summary": "Endpoint assessment was not run for this scan.",
             "metadata": {"phase": "edr_phase_1", "reason": "endpoint_scan_disabled"},
         }
+    # Per-computer ("this device") summary for the Overview page: scoped to this
+    # machine's own findings and open services, computed from the interfaces we
+    # already detected.
+    local_ips = {iface.ip for iface in interfaces if iface.ip} | {"127.0.0.1", "::1"}
+    report.scan_metadata["this_device"] = _build_this_device_summary(report, local_ips)
+
     _emit(progress, "Writing local HTML, PDF, JSON, and CSV reports")
     paths = export_report(report, out)
     if update_known_devices:

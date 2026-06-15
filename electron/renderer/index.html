@@ -96,7 +96,7 @@
                 </article>
                 <article class="overview-card">
                   <div class="overview-card-icon ov-icon-devices" aria-hidden="true"></div>
-                  <small>Devices</small>
+                  <small>Open Services</small>
                   <b id="ovDeviceCount">-</b>
                   <span id="ovDeviceDetail" class="meta">Run a scan to see this</span>
                 </article>
@@ -361,9 +361,11 @@
             </div>
             <div class="toolbar page-toolbar">
               <button id="findingsRefresh" class="action secondary icon-refresh" type="button">Refresh</button>
+              <button id="findingsClearedToggle" class="action secondary" type="button">Cleared risks</button>
               <span id="findingsMeta" class="meta">No scan yet. Run Scan from the protection panel.</span>
             </div>
             <div id="findingsList" class="findings-list" aria-label="Findings"></div>
+            <div id="clearedList" class="findings-list" aria-label="Cleared risks" hidden></div>
           </section>
 
           <aside id="playbookDrawer" class="playbook-drawer" aria-label="Fix guidance" aria-hidden="true">

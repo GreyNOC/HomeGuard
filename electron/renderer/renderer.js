@@ -652,9 +652,13 @@ updateScanIndicator();
 // Findings + fix-guidance playbooks
 // =============================================================
 const findingsApi = window.homeguard?.findings || null;
+const risksApi = window.homeguard?.risks || null;
 const findingsListEl = $("findingsList");
 const findingsMetaEl = $("findingsMeta");
 const findingsRefreshBtn = $("findingsRefresh");
+const clearedListEl = $("clearedList");
+const findingsClearedToggleBtn = $("findingsClearedToggle");
+let showingCleared = false;
 const playbookDrawer = $("playbookDrawer");
 const playbookDrawerClose = $("playbookDrawerClose");
 const playbookDrawerTitle = $("playbookDrawerTitle");
@@ -745,11 +749,97 @@ function renderFindings() {
     fixBtn.textContent = "View fix steps";
     fixBtn.addEventListener("click", () => openPlaybook(finding));
 
+    // "Clear risk" dismisses this risk by its stable signature so the same
+    // risk is not flagged on future scans. It is filtered at scan time and
+    // can be restored from the "Cleared risks" view.
+    const signature = String(finding.signature || "");
+    let clearBtn = null;
+    if (risksApi && signature) {
+      clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "action secondary";
+      clearBtn.textContent = "Clear risk";
+      clearBtn.title = "Clear this risk so it is not flagged on future scans";
+      clearBtn.addEventListener("click", async () => {
+        clearBtn.disabled = true;
+        const res = await risksApi.clear({ signature, title: String(finding.title || "") });
+        if (res && res.ok) {
+          cachedFindings = cachedFindings.filter((item) => String(item.signature || "") !== signature);
+          renderFindings();
+          if (findingsMetaEl) {
+            findingsMetaEl.textContent = "Risk cleared. It won't be flagged on future scans (see Cleared risks).";
+          }
+          if (window.HomeGuardOverview) window.HomeGuardOverview.refresh();
+        } else {
+          clearBtn.disabled = false;
+        }
+      });
+    }
+
     row.appendChild(badge);
     row.appendChild(body);
     row.appendChild(fixBtn);
+    if (clearBtn) row.appendChild(clearBtn);
     findingsListEl.appendChild(row);
   }
+}
+
+async function loadClearedRisks() {
+  if (!risksApi || !clearedListEl) return;
+  clearChildren(clearedListEl);
+  const result = await risksApi.listCleared();
+  const rows = result && Array.isArray(result.cleared) ? result.cleared : [];
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "meta";
+    empty.textContent = "No cleared risks. Use \"Clear risk\" on a finding to dismiss it.";
+    clearedListEl.appendChild(empty);
+    return;
+  }
+  for (const entry of rows) {
+    const signature = String(entry.signature || "");
+    const row = document.createElement("article");
+    row.className = "finding-row";
+    const body = document.createElement("div");
+    body.className = "finding-body";
+    const title = document.createElement("p");
+    title.className = "finding-title";
+    title.textContent = String(entry.title || signature || "Cleared risk");
+    const sub = document.createElement("p");
+    sub.className = "finding-sub meta";
+    sub.textContent = `Cleared ${relativeFindingTime(entry.cleared_at) || ""}`.trim();
+    body.appendChild(title);
+    body.appendChild(sub);
+    const restoreBtn = document.createElement("button");
+    restoreBtn.type = "button";
+    restoreBtn.className = "action secondary";
+    restoreBtn.textContent = "Restore";
+    restoreBtn.title = "Flag this risk again on the next scan";
+    restoreBtn.addEventListener("click", async () => {
+      restoreBtn.disabled = true;
+      const res = await risksApi.restore({ signature });
+      if (res && res.ok) {
+        loadClearedRisks();
+        if (window.HomeGuardOverview) window.HomeGuardOverview.refresh();
+      } else {
+        restoreBtn.disabled = false;
+      }
+    });
+    row.appendChild(body);
+    row.appendChild(restoreBtn);
+    clearedListEl.appendChild(row);
+  }
+}
+
+function toggleClearedView() {
+  if (!clearedListEl || !findingsListEl) return;
+  showingCleared = !showingCleared;
+  clearedListEl.hidden = !showingCleared;
+  findingsListEl.hidden = showingCleared;
+  if (findingsClearedToggleBtn) {
+    findingsClearedToggleBtn.textContent = showingCleared ? "Back to findings" : "Cleared risks";
+  }
+  if (showingCleared) loadClearedRisks();
 }
 
 async function loadFindings() {
@@ -1345,6 +1435,7 @@ async function dispatchPlaybookAction(action) {
 }
 
 if (findingsRefreshBtn) findingsRefreshBtn.addEventListener("click", loadFindings);
+if (findingsClearedToggleBtn) findingsClearedToggleBtn.addEventListener("click", toggleClearedView);
 if (playbookDrawerClose) playbookDrawerClose.addEventListener("click", closePlaybook);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && playbookDrawer && playbookDrawer.classList.contains("is-open")) {

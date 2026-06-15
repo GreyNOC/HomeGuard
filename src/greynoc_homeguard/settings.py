@@ -69,6 +69,10 @@ class AppSettings:
                 "show_weather_greeting": False,
             },
             "ignored_findings": {},
+            # Risks the user explicitly cleared, keyed by stable finding
+            # signature so they stay cleared across scans (even after a
+            # definitions update changes the volatile finding_id).
+            "cleared_findings": {},
         }
 
     def load(self) -> "AppSettings":
@@ -107,6 +111,8 @@ class AppSettings:
         self.data["ui"] = ui
         ignored = loaded.get("ignored_findings") if isinstance(loaded.get("ignored_findings"), dict) else {}
         self.data["ignored_findings"] = ignored
+        cleared = loaded.get("cleared_findings") if isinstance(loaded.get("cleared_findings"), dict) else {}
+        self.data["cleared_findings"] = cleared
         return self
 
     def save(self) -> None:
@@ -287,3 +293,40 @@ class AppSettings:
         if isinstance(ignored, dict) and finding_id in ignored:
             del ignored[finding_id]
             self.save()
+
+    # --- Cleared risks (stable, signature-keyed; survive across scans) -------
+    def cleared_signatures(self) -> set[str]:
+        cleared = self.data.get("cleared_findings") if isinstance(self.data.get("cleared_findings"), dict) else {}
+        return {str(key) for key, value in cleared.items() if value}
+
+    def clear_finding(self, signature: str, *, title: str = "", device: str = "", reason: str = "user") -> bool:
+        signature = str(signature or "").strip()
+        if not signature:
+            return False
+        cleared = self.data.setdefault("cleared_findings", {})
+        cleared[signature] = {
+            "cleared_at": utcnow(),
+            "reason": str(reason or "user"),
+            "title": str(title or "")[:250],
+            "device": str(device or "")[:120],
+        }
+        self.save()
+        return True
+
+    def restore_finding(self, signature: str) -> bool:
+        cleared = self.data.get("cleared_findings")
+        if isinstance(cleared, dict) and signature in cleared:
+            del cleared[signature]
+            self.save()
+            return True
+        return False
+
+    def cleared_findings_list(self) -> list[dict[str, Any]]:
+        cleared = self.data.get("cleared_findings") if isinstance(self.data.get("cleared_findings"), dict) else {}
+        rows = [
+            {"signature": str(sig), **(value if isinstance(value, dict) else {})}
+            for sig, value in cleared.items()
+            if value
+        ]
+        rows.sort(key=lambda row: str(row.get("cleared_at") or ""), reverse=True)
+        return rows
