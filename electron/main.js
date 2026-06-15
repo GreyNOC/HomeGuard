@@ -794,6 +794,44 @@ ipcMain.handle("homeguard:definitions-status", async () => {
   return { stdout: scrubText(result.stdout), status: scrubObject(parseKeyValueOutput(result.stdout)) };
 });
 
+function normalizeUiPrefs(prefs) {
+  // UI preferences are a small, non-sensitive settings object. A safe default
+  // (chat bubble on, weather off) is the documented default, not fabricated
+  // dashboard data, so it is fine to fall back to it if the backend is briefly
+  // unreachable.
+  const value = isPlainObject(prefs) ? prefs : {};
+  return {
+    show_chat_bubble: value.show_chat_bubble !== false,
+    show_weather_greeting: value.show_weather_greeting === true,
+  };
+}
+
+ipcMain.handle("homeguard:ui-prefs", async () => {
+  try {
+    const result = await runHomeGuard(["--json", "ui-prefs"]);
+    return normalizeUiPrefs(parseJsonStdout(result.stdout));
+  } catch {
+    return normalizeUiPrefs(null);
+  }
+});
+
+ipcMain.handle("homeguard:ui-prefs-set", async (_event, prefs = {}) => {
+  prefs = isPlainObject(prefs) ? prefs : {};
+  const args = ["--json", "ui-prefs-set"];
+  if (typeof prefs.show_chat_bubble === "boolean") {
+    args.push("--chat-bubble", prefs.show_chat_bubble ? "on" : "off");
+  }
+  if (typeof prefs.show_weather_greeting === "boolean") {
+    args.push("--weather-greeting", prefs.show_weather_greeting ? "on" : "off");
+  }
+  try {
+    const result = await runHomeGuard(args);
+    return normalizeUiPrefs(parseJsonStdout(result.stdout));
+  } catch {
+    return normalizeUiPrefs(null);
+  }
+});
+
 ipcMain.handle("homeguard:history", async () => {
   const result = await runHomeGuard(["history", "--limit", "10"]);
   return { stdout: scrubText(result.stdout) };

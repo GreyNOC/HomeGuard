@@ -741,6 +741,42 @@ def cmd_flow_set(args: argparse.Namespace) -> int:
     return cmd_flow_status(args) if not _JSON_MODE else (_emit_json(cfg) or 0)
 
 
+def cmd_ui_prefs(_args: argparse.Namespace) -> int:
+    """Show desktop UI preferences (consumed by the Electron Overview dashboard)."""
+    prefs = AppSettings().load().ui_prefs()
+    if _JSON_MODE:
+        _emit_json(prefs)
+        return 0
+    _panel(
+        "UI Preferences",
+        [
+            ("show_chat_bubble", _badge("on" if prefs["show_chat_bubble"] else "off", {"on": "green", "off": "muted"})),
+            ("show_weather_greeting", _badge("on" if prefs["show_weather_greeting"] else "off", {"on": "green", "off": "muted"})),
+        ],
+    )
+    return 0
+
+
+def _on_off_flag(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return str(value).strip().lower() == "on"
+
+
+def cmd_ui_prefs_set(args: argparse.Namespace) -> int:
+    """Update desktop UI preferences (floating chat bubble, weather greeting)."""
+    settings = AppSettings().load()
+    prefs = settings.set_ui_prefs(
+        show_chat_bubble=_on_off_flag(getattr(args, "chat_bubble", None)),
+        show_weather_greeting=_on_off_flag(getattr(args, "weather_greeting", None)),
+    )
+    if _JSON_MODE:
+        _emit_json(prefs)
+        return 0
+    _ok("UI preferences updated.")
+    return cmd_ui_prefs(args)
+
+
 def cmd_update_hashes(args: argparse.Namespace) -> int:
     """Download/apply a cryptographically-signed malware hash feed."""
     settings = AppSettings().load()
@@ -1375,6 +1411,13 @@ def build_parser() -> argparse.ArgumentParser:
     flow_set.add_argument("--enable", action="store_true", help="Enable per-device cloud edges on the map")
     flow_set.add_argument("--disable", action="store_true", help="Disable per-device cloud edges")
     flow_set.set_defaults(func=cmd_flow_set)
+
+    ui_prefs = sub.add_parser("ui-prefs", help="Show desktop UI preferences", formatter_class=HomeGuardHelpFormatter)
+    ui_prefs.set_defaults(func=cmd_ui_prefs)
+    ui_prefs_set = sub.add_parser("ui-prefs-set", help="Update desktop UI preferences", formatter_class=HomeGuardHelpFormatter)
+    ui_prefs_set.add_argument("--chat-bubble", dest="chat_bubble", choices=["on", "off"], default=None, help="Show the floating chat bubble")
+    ui_prefs_set.add_argument("--weather-greeting", dest="weather_greeting", choices=["on", "off"], default=None, help="Show the local weather greeting (opt-in)")
+    ui_prefs_set.set_defaults(func=cmd_ui_prefs_set)
 
     update_hashes = sub.add_parser(
         "update-hashes",
