@@ -626,7 +626,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 def cmd_network_map(args: argparse.Namespace) -> int:
     """Emit the local-device + cloud-node network map."""
-    network_map = build_network_map(resolve_dns=not args.no_dns)
+    network_map = build_network_map(resolve_dns=bool(getattr(args, "resolve_dns", False)))
     if _JSON_MODE or args.json_out:
         _emit_json(network_map)
         return 0
@@ -1274,7 +1274,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HomeGuardHelpFormatter,
     )
     network_map.add_argument("--json-out", action="store_true", help="Force JSON output even without the global --json flag")
-    network_map.add_argument("--no-dns", action="store_true", help="Skip reverse-DNS lookups for cloud endpoints")
+    network_map.add_argument(
+        "--resolve-dns",
+        action="store_true",
+        help="Reverse-DNS the cloud endpoints (off by default; sends current external IPs to your DNS resolver)",
+    )
     network_map.set_defaults(func=cmd_network_map)
 
     update_hashes = sub.add_parser(

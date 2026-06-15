@@ -65,7 +65,7 @@ class CliSmokeTests(unittest.TestCase):
         from greynoc_homeguard.paths import ensure_app_dirs
 
         ensure_app_dirs()
-        self.assertEqual(cli.cmd_network_map(Namespace(no_dns=True, json_out=False)), 0)
+        self.assertEqual(cli.cmd_network_map(Namespace(resolve_dns=False, json_out=False)), 0)
 
     def test_quarantine_list_command_does_not_crash_when_empty(self):
         from greynoc_homeguard import cli

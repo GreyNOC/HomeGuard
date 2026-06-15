@@ -756,9 +756,16 @@ ipcMain.handle("homeguard:quarantine-list", async () => {
   }
 });
 
-ipcMain.handle("homeguard:network-map", async () => {
+ipcMain.handle("homeguard:network-map", async (_event, options = {}) => {
+  options = isPlainObject(options) ? options : {};
+  // Reverse-DNS is opt-in: it leaks current external connection IPs to the
+  // user's DNS resolver, so the default map view stays sterile.
+  const args = ["--json", "network-map"];
+  if (options.resolveDns === true) {
+    args.push("--resolve-dns");
+  }
   try {
-    const result = await runHomeGuard(["--json", "network-map"]);
+    const result = await runHomeGuard(args);
     const parsed = parseJsonStdout(result.stdout);
     if (!parsed) {
       return { ok: false, message: "Network map produced no parseable result." };

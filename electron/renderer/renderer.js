@@ -1133,7 +1133,8 @@ async function loadNetworkMap() {
   if (nmMetaEl) nmMetaEl.textContent = "Building network map…";
   setStatus("Building network map…");
   try {
-    const result = await networkMapApi();
+    const resolveDns = !!($("networkMapResolveDns") && $("networkMapResolveDns").checked);
+    const result = await networkMapApi({ resolveDns });
     if (!result || !result.ok || !result.map) {
       if (nmMetaEl) nmMetaEl.textContent = (result && result.message) || "Could not build the network map.";
       return;
@@ -1175,6 +1176,7 @@ if ($("networkMapRefresh")) $("networkMapRefresh").addEventListener("click", loa
 if ($("networkMapZoomIn")) $("networkMapZoomIn").addEventListener("click", () => nmZoom(1.18));
 if ($("networkMapZoomOut")) $("networkMapZoomOut").addEventListener("click", () => nmZoom(1 / 1.18));
 if ($("networkMapFit")) $("networkMapFit").addEventListener("click", nmFit);
+if ($("networkMapResolveDns")) $("networkMapResolveDns").addEventListener("change", loadNetworkMap);
 
 function showPlaybookStatus(message, kind = "info") {
   if (!playbookDrawerStatus) return;

@@ -144,6 +144,43 @@ class BuildNetworkMapTest(unittest.TestCase):
         self.assertEqual(stats["inactive_count"], 1)
 
 
+class DnsOptInTest(unittest.TestCase):
+    def _build(self, **kwargs):
+        with mock.patch.object(network_map, "_local_host_ips", return_value={"192.168.1.50"}), \
+             mock.patch.object(network_map, "_load_baseline_records", return_value={}), \
+             mock.patch.object(network_map.ai_traffic, "collect_traffic_summary", _fake_traffic), \
+             mock.patch.object(network_map.ai_traffic, "hostname_for_endpoint", return_value="named.example") as resolver:
+            result = network_map.build_network_map(report=SAMPLE_REPORT, **kwargs)
+        return result, resolver
+
+    def test_dns_off_by_default(self) -> None:
+        # Privacy: building the map must NOT reverse-DNS external IPs unless asked.
+        result, resolver = self._build()
+        resolver.assert_not_called()
+        self.assertTrue(all(node["label"] == node["ip"] for node in result["cloud_nodes"]))
+
+    def test_dns_opt_in(self) -> None:
+        result, resolver = self._build(resolve_dns=True)
+        self.assertTrue(resolver.called)
+        self.assertTrue(any(node["hostname"] == "named.example" for node in result["cloud_nodes"]))
+
+
+class LocalHostIpTest(unittest.TestCase):
+    def test_prefers_lan_interfaces_over_route_probe(self) -> None:
+        # P2: host IPs must come from the VPN-filtered LAN interfaces, not a
+        # default-route probe that returns the VPN address on a full tunnel.
+        lan = [LocalInterface("eth0", "192.168.1.50", "192.168.1.0/24")]
+        with mock.patch.object(network_map, "_lan_interface_ips_and_cidrs", return_value=({"192.168.1.50"}, ["192.168.1.0/24"])):
+            ips = network_map._local_host_ips()
+        self.assertEqual(ips, {"192.168.1.50"})
+
+    def test_falls_back_when_no_lan_interfaces(self) -> None:
+        with mock.patch.object(network_map, "_lan_interface_ips_and_cidrs", return_value=(set(), [])):
+            ips = network_map._local_host_ips()
+        # Falls back to socket-based detection; result is a set (possibly empty).
+        self.assertIsInstance(ips, set)
+
+
 class EmptyReportTest(unittest.TestCase):
     def test_no_report_still_returns_host(self) -> None:
         with mock.patch.object(network_map, "_local_host_ips", return_value={"192.168.1.50"}), \

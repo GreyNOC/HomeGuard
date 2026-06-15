@@ -40,7 +40,7 @@ contextBridge.exposeInMainWorld("homeguard", {
     quarantineRestore: (entryId, options) => ipcRenderer.invoke("homeguard:quarantine-restore", entryId, options),
     quarantineDelete: (entryId) => ipcRenderer.invoke("homeguard:quarantine-delete", entryId),
   },
-  networkMap: () => ipcRenderer.invoke("homeguard:network-map"),
+  networkMap: (options) => ipcRenderer.invoke("homeguard:network-map", options),
   chats: {
     list: () => ipcRenderer.invoke("homeguard:chats-list"),
     get: (id) => ipcRenderer.invoke("homeguard:chats-get", id),

@@ -86,7 +86,34 @@ def _load_baseline_records() -> dict[str, dict[str, Any]]:
     return devices if isinstance(devices, dict) else {}
 
 
+def _lan_interface_ips_and_cidrs() -> tuple[set[str], list[str]]:
+    """LAN interface IPs and CIDRs from the same VPN-filtered source discovery
+    uses (:func:`network.detect_local_interfaces`). Empty on any failure."""
+    ips: set[str] = set()
+    cidrs: list[str] = []
+    try:
+        from .network import detect_local_interfaces
+
+        for iface in detect_local_interfaces():
+            ip = str(getattr(iface, "ip", "") or "")
+            cidr = str(getattr(iface, "cidr", "") or "")
+            if ip and _is_private(ip) and not ip.startswith("169.254."):
+                ips.add(ip)
+            if cidr:
+                cidrs.append(cidr)
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return ips, cidrs
+
+
 def _local_host_ips() -> set[str]:
+    # Prefer the VPN-filtered LAN interfaces discovery uses, so the map's
+    # "this PC" node and CIDR track the physical LAN even on a full-tunnel VPN
+    # (where a default-route probe would return the VPN tunnel address and the
+    # hostname may only resolve to loopback).
+    lan_ips, _ = _lan_interface_ips_and_cidrs()
+    if lan_ips:
+        return lan_ips
     addresses: set[str] = set()
     try:
         addresses.update(socket.gethostbyname_ex(socket.gethostname())[2])
@@ -166,16 +193,22 @@ def _risk_for(findings: list[dict[str, Any]], port_count: int) -> tuple[int, str
 
 
 def _detect_cidr(report: dict[str, Any], host_ips: set[str]) -> str:
+    # Prefer a CIDR that actually contains one of the host IPs, drawn from the
+    # scan report's interfaces and the live VPN-filtered LAN interfaces.
+    candidates: list[str] = []
     metadata = report.get("scan_metadata") if isinstance(report.get("scan_metadata"), dict) else {}
     for interface in metadata.get("interfaces") or []:
         if isinstance(interface, dict) and interface.get("cidr"):
-            cidr = str(interface.get("cidr"))
-            try:
-                network = ipaddress.ip_network(cidr, strict=False)
-            except ValueError:
-                continue
-            if any(ipaddress.ip_address(ip) in network for ip in host_ips if _is_private(ip)):
-                return str(network)
+            candidates.append(str(interface.get("cidr")))
+    _lan_ips, lan_cidrs = _lan_interface_ips_and_cidrs()
+    candidates.extend(lan_cidrs)
+    for cidr in candidates:
+        try:
+            network = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            continue
+        if any(ipaddress.ip_address(ip) in network for ip in host_ips if _is_private(ip)):
+            return str(network)
     for ip in sorted(host_ips):
         try:
             return str(ipaddress.ip_network(f"{ip}/24", strict=False))
@@ -387,9 +420,16 @@ def _bundle(node_list: list[dict[str, Any]], *, bundle_id: str, label: str, bund
 def build_network_map(
     *,
     report: dict[str, Any] | None = None,
-    resolve_dns: bool = True,
+    resolve_dns: bool = False,
 ) -> dict[str, Any]:
-    """Build the local-device + cloud-node map as a JSON-able dict."""
+    """Build the local-device + cloud-node map as a JSON-able dict.
+
+    ``resolve_dns`` is **off by default** (sterile/privacy-preserving). When
+    enabled, cloud endpoints get a bounded reverse-DNS pass — that sends the
+    user's current external connection IPs to their DNS resolver, so it must be
+    an explicit opt-in, mirroring :func:`ai_traffic.hostname_for_endpoint`'s
+    deliberate avoidance of bulk resolution.
+    """
     report = report if report is not None else _load_latest_report()
     baseline_records = _load_baseline_records()
     by_ip, by_mac = _baseline_index(baseline_records)
