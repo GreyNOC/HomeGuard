@@ -31,8 +31,37 @@ from greynoc_homeguard.guidance import (  # noqa: E402
     priority_actions,
     with_indicator_note,
 )
-from greynoc_homeguard.models import Device  # noqa: E402
+from greynoc_homeguard.models import Device, Finding, HomeGuardReport  # noqa: E402
 from greynoc_homeguard.privacy import assert_share_safe, scrub_report  # noqa: E402
+
+
+def _endpoint_report(category, severity="high", rule_id="endpoint_finding"):
+    finding = Finding(
+        finding_id="hg_ep",
+        rule_id=rule_id,
+        title="Suspicious item",
+        severity=severity,
+        confidence=0.9,
+        risk_score=80.0,
+        priority="P1",
+        category=category,
+        device_ip="",
+        device_name="this PC",
+        plain_english="",
+        recommended_actions=[],
+        evidence={},
+    )
+    return HomeGuardReport(
+        report_id="hg_report_ep",
+        created_at="2026-06-15T00:00:00Z",
+        summary="",
+        overall_risk="high",
+        overall_score=80.0,
+        devices=[],
+        findings=[finding],
+        next_steps=[],
+        scan_metadata={"definition_status": {"update_status": "current"}},
+    )
 
 
 def _quarantined_report():
@@ -104,6 +133,38 @@ class PriorityActionTests(unittest.TestCase):
         names = [a["action"] for a in actions]
         self.assertIn("Keep security definitions current", names)
         self.assertEqual(names[-1], "Keep security definitions current")
+
+
+class EndpointGuidanceTests(unittest.TestCase):
+    """Endpoint malware / Windows-audit findings must not be buried under the
+    definitions reminder (regression test for the priority_actions mapping)."""
+
+    def test_endpoint_findings_surface_as_top_action(self):
+        for category in (
+            "endpoint_file_signature",
+            "endpoint_process",
+            "endpoint_persistence",
+            "windows_privesc",
+            "windows_credential_exposure",
+            "credential_access",  # abuse-signature category, no prefix
+        ):
+            with self.subTest(category=category):
+                actions = priority_actions(_endpoint_report(category))
+                names = [a["action"] for a in actions]
+                self.assertEqual(names[0], "Review security alerts on this device")
+                self.assertEqual(names[-1], "Keep security definitions current")
+
+    def test_high_severity_unmapped_category_is_safety_netted(self):
+        actions = priority_actions(
+            _endpoint_report("some_future_category", severity="critical", rule_id="generic_rule")
+        )
+        self.assertIn("Review security alerts on this device", [a["action"] for a in actions])
+
+    def test_low_severity_unmapped_category_is_not_invented(self):
+        actions = priority_actions(
+            _endpoint_report("trivial_low_thing", severity="info", rule_id="generic_rule")
+        )
+        self.assertEqual([a["action"] for a in actions], ["Keep security definitions current"])
 
 
 class ReportDisclaimerTests(unittest.TestCase):

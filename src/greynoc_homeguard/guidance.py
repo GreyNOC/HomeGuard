@@ -73,6 +73,11 @@ _ACTION_GROUPS: list[dict[str, str]] = [
         "detail": "Check the devices you marked as quarantined and decide whether to block them on your router.",
     },
     {
+        "key": "review_endpoint",
+        "action": "Review security alerts on this device",
+        "detail": "Check the files, processes, or startup items HomeGuard flagged on this computer and remove anything you do not recognize.",
+    },
+    {
         "key": "identify_unknown",
         "action": "Identify unknown devices",
         "detail": "Make sure every device on your network is one you or your household recognizes.",
@@ -100,6 +105,29 @@ _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 
 _CURRENT_DEFINITION_STATES = {"", "current", "ok", "up-to-date", "up to date", "fresh", "updated"}
 
+# Endpoint / on-device security findings come from the optional endpoint malware
+# scan and the Windows hardening audit. Their categories carry an ``endpoint_``
+# or ``windows_`` prefix, except the abuse-signature categories below, which have
+# no shared prefix. ``_signature_category`` can also emit custom categories, so
+# priority_actions additionally has a high-severity safety net (see below).
+_ENDPOINT_SECURITY_CATEGORIES = {
+    "powershell_abuse",
+    "script_obfuscation",
+    "credential_access",
+    "surveillance",
+    "process_dumping",
+    "destructive_or_mayhem_behavior",
+}
+
+
+def _is_endpoint_category(rule_id: str, category: str) -> bool:
+    return bool(
+        category.startswith("endpoint_")
+        or category.startswith("windows_")
+        or category in _ENDPOINT_SECURITY_CATEGORIES
+        or rule_id.startswith("endpoint_")
+    )
+
 
 def _group_for_finding(finding: Any) -> str | None:
     """Map a single finding to one practical action group (or None)."""
@@ -109,6 +137,8 @@ def _group_for_finding(finding: Any) -> str | None:
 
     if rule_id == "quarantined_device" or category == "device_trust":
         return "review_flagged"
+    if _is_endpoint_category(rule_id, category):
+        return "review_endpoint"
     if (
         rule_id in {"new_device", "missing_mac", "possible_unauthorized_access", "hostname_collision"}
         or rule_id.startswith("custom_hostname")
@@ -149,10 +179,16 @@ def priority_actions(report: Any) -> list[dict[str, Any]]:
     worst: dict[str, int] = {}
     for finding in findings:
         group = _group_for_finding(finding)
-        if group is None:
-            continue
-        counts[group] = counts.get(group, 0) + 1
         rank = _SEVERITY_RANK.get(str(getattr(finding, "severity", "info")).lower(), 0)
+        if group is None:
+            # Safety net: never let a serious finding fall out of "what to do
+            # first". An unmapped high/critical finding (for example a new
+            # endpoint/malware category we have not enumerated) is surfaced as a
+            # device security alert to review rather than silently dropped.
+            if rank < _SEVERITY_RANK["high"]:
+                continue
+            group = "review_endpoint"
+        counts[group] = counts.get(group, 0) + 1
         worst[group] = max(worst.get(group, 0), rank)
 
     # A device can be quarantined in your records even when it is not active in
