@@ -222,6 +222,57 @@ def check_secret_patterns() -> None:
     print("[OK] no obvious committed secrets in tracked text files")
 
 
+def check_no_mock_dashboard() -> None:
+    """Ensure the Overview dashboard ships live placeholders, not baked-in demo data.
+
+    The Overview is a live, state-driven dashboard. Production renderer code must
+    not display sample values (fake device/alert/update counts, a hardcoded
+    greeting, or design-mockup copy) -- every number must come from real
+    HomeGuard state at runtime. This catches the obvious regressions where a
+    static mockup leaks into the packaged renderer.
+    """
+
+    renderer = ROOT / "electron" / "renderer"
+    index_path = renderer / "index.html"
+    overview_path = renderer / "overview.js"
+    if not index_path.exists() or not overview_path.exists():
+        # Overview is optional; nothing to check if it is not present.
+        print("[OK] overview dashboard live-data check (no overview present)")
+        return
+    index_html = read_text(index_path)
+    overview_js = read_text(overview_path)
+
+    # 1. Stat-card values must start as live placeholders, never hardcoded numbers.
+    for card_id in ("ovRiskValue", "ovDeviceCount", "ovAlertCount", "ovUpdateCount"):
+        match = re.search(rf'id="{card_id}"[^>]*>([^<]*)<', index_html)
+        if match is None:
+            fail(f"Overview stat card #{card_id} is missing from index.html")
+        initial = match.group(1).strip()
+        if any(ch.isdigit() for ch in initial):
+            fail(f"Overview stat card #{card_id} ships a hardcoded value '{initial}' instead of a live placeholder")
+
+    # 2. The greeting must be computed at runtime, not frozen in markup.
+    for phrase in ("Good morning", "Good afternoon", "Good evening", "Good night"):
+        if phrase in index_html:
+            fail(f"Greeting '{phrase}' is hardcoded in index.html; it must be set dynamically by overview.js")
+    if "greetingForHour" not in overview_js:
+        fail("overview.js is missing the dynamic time-of-day greeting (greetingForHour)")
+
+    # 3. Known design-mockup literals must never ship in the renderer.
+    mock_markers = (
+        "18 devices",
+        "Identify 2 unknown devices",
+        "Review 3 security alerts",
+        "Update 2 devices",
+        "Your network is protected.</",
+    )
+    for marker in mock_markers:
+        if marker in index_html or marker in overview_js:
+            fail(f"Mock dashboard literal '{marker}' found in renderer; dashboard values must come from real state")
+
+    print("[OK] overview dashboard uses live state (no mock constants)")
+
+
 def check_release_files() -> None:
     required = [
         ROOT / "docs" / "security" / "SECURITY_REVIEW.md",
@@ -238,6 +289,7 @@ def check_release_files() -> None:
 def main() -> int:
     check_required_markers()
     check_secret_patterns()
+    check_no_mock_dashboard()
     check_release_files()
     print("HomeGuard security preflight passed.")
     return 0
