@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 - Network Map + release-pipeline hardening (2026-06-15)
 
 ### Network map (local devices + cloud nodes)
 - New `network_map` module adapting the GreyNOC saturn `noc_core.network_mapper` engine to HomeGuard's own data: local devices from the latest scan `report.json` (enriched with baseline trust/owner/type) and **cloud nodes** from this host's live external connections (`ai_traffic`). Builds nodes + links with local/cloud tiers, gateway/router detection, finding-driven risk, and collapsed peripheral/inactive bundles for larger home labs.
