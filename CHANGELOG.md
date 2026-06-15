@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.0 - Live Overview dashboard + consumer-safety polish (2026-06-15)
+
+### Live Overview dashboard
+- New **Overview** page is now the default landing view, wired entirely to real HomeGuard state through the existing IPC bridge — latest scan report, known-device baseline, definition status, scan history, schedule, and AI status. **No mock/sample data in production paths:** a fresh install shows an honest "No scan yet" first-run state, and any field that cannot load degrades to a clear "not available" message instead of inventing numbers.
+- Risk / Devices / Alerts / Updates cards bind to the latest report (with an unknown-device count from baseline trust and a severity breakdown for alerts). **Recommended for You** is derived from the report's prioritized actions; **Recent Activity** is built from real scan history, definition updates, and schedule state.
+- **Dynamic greeting** (time-of-day morning/afternoon/evening/night) with a state-aware subtext (no scan / scanning / protected / needs review). **Scan Now** triggers the real scan flow with live progress and refreshes the dashboard on completion (no app restart). A spinning **GreyNOC globe** in the hero (shared Three.js orb) idles slowly and brightens during a scan.
+- **HomeGuard Assistant** rail shows the real AI mode ("Local AI (Sterile)" / "AI disabled") and routes its quick actions ("explain this alert", "what should I do first?", "summarize my last scan") through the existing report-aware chat using real scan context.
+- New persistent **"Show floating chat bubble"** preference (and an opt-in, off-by-default weather-greeting toggle) stored in the existing `AppSettings` (`ui` block) with `GNHL ui-prefs` get/set. The app stays offline-first — no weather/network calls are made. A release-gate check (`check_no_mock_dashboard`) fails the build if hardcoded demo values, a frozen greeting, or design-mockup literals ever ship in the renderer.
+
+### Consumer-safety messaging
+- Standardized **"indicator, not proof"** language across findings: port-only, product-hint, possible-intrusion, hostname-collision, and remote-admin-cluster findings now state they are indicators to review and confirm before acting (severity/scoring unchanged). The quarantine finding makes clear that HomeGuard flagging is **not** the same as router-level isolation.
+- Reports (Markdown/HTML/PDF) gain a short global disclaimer and a calm, prioritized **"What to do first"** action summary near the top, derived from the existing findings/next-steps; the report JSON adds backward-compatible `disclaimer` and `priority_actions` fields. Endpoint malware / Windows-audit findings are included in this prioritized guidance with a high-severity safety net.
+
+### Housekeeping
+- Stale `1.5.0` release-doc references replaced with version-derived wording (read from `pyproject.toml`); `RELEASE_CHECKLIST.md`/`BUILD_AND_SIGNING.md`/`README.md` agree on the flow.
+- Electron main-process privacy scrubbers extracted into `electron/privacy_utils.js` (no behavior change; security-gate strings preserved).
+- Bumped vulnerable transitive **dev** dependencies (`form-data` 4.0.6, `js-yaml` 4.2.0, `tar` 7.5.16) to clear `npm audit --audit-level=high`; no shipped runtime change.
+
 ## 1.8.0 - Per-device cloud edges (Network Map Phase 1) (2026-06-15)
 
 ### Per-device cloud edges (Network Map, Phase 1)
