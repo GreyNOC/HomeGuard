@@ -1358,6 +1358,14 @@ def _netbios_lookup(ip: str, timeout: float) -> str:
     """
     if not ip:
         return ""
+    # Only ever pass a validated IP address to nbtstat/nmblookup. Callers filter
+    # IPs upstream today, but validating here too means a hostile or malformed
+    # value (e.g. one starting with "-") can never reach the subprocess as an
+    # option, regardless of caller.
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return ""
     is_windows = platform.system().lower().startswith("win")
     candidates: list[list[str]] = []
     if is_windows:

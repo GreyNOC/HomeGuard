@@ -430,7 +430,11 @@ class EndpointMalwareScannerTests(unittest.TestCase):
             _run_json_powershell("Get-CimInstance Win32_Process")
 
         command = run.call_args.args[0]
-        self.assertEqual(command[:2], ["powershell.exe", "-NoProfile"])
+        # The binary is resolved to its absolute %SystemRoot% path on Windows
+        # (PATH-hijack hardening) and falls back to the bare name elsewhere, so
+        # assert on its identity rather than a literal string.
+        self.assertTrue(command[0].lower().endswith("powershell.exe"))
+        self.assertEqual(command[1], "-NoProfile")
         self.assertNotIn("-ExecutionPolicy", command)
         self.assertNotIn("Bypass", command)
 

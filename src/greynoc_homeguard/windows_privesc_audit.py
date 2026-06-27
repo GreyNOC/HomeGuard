@@ -29,6 +29,26 @@ except ImportError:  # pragma: no cover - non-Windows
 
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _windows_system_tool(name: str) -> str:
+    """Resolve a Windows system binary to its absolute path under %SystemRoot%.
+
+    These checks frequently run inside an elevated process. Resolving by
+    absolute path stops a binary planted in a user-writable PATH entry from
+    being executed in place of the genuine system tool. Falls back to the bare
+    name when the expected file is absent so unusual installs behave as before.
+    """
+    if platform.system() != "Windows":
+        return name
+    system_root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
+    if name.lower() == "powershell.exe":
+        candidate = os.path.join(system_root, "System32", "WindowsPowerShell", "v1.0", name)
+    else:
+        candidate = os.path.join(system_root, "System32", name)
+    return candidate if os.path.isfile(candidate) else name
+
+
 SEVERITY_SCORE = {"critical": 95.0, "high": 78.0, "medium": 54.0, "low": 26.0, "info": 8.0}
 PRIORITY = {"critical": "P1", "high": "P2", "medium": "P3", "low": "P4", "info": "P4"}
 
@@ -378,7 +398,7 @@ def _run_command(args: list[str], *, timeout: int = 15) -> subprocess.CompletedP
 
 
 def _run_powershell_json(script: str, *, timeout: int = 20) -> list[dict[str, Any]]:
-    result = _run_command(["powershell.exe", "-NoProfile", "-Command", script], timeout=timeout)
+    result = _run_command([_windows_system_tool("powershell.exe"), "-NoProfile", "-Command", script], timeout=timeout)
     if not result or result.returncode != 0 or not result.stdout.strip():
         return []
     try:
@@ -569,7 +589,7 @@ def check_weak_service_permissions(services: Iterable[dict[str, str]] | None = N
         name = str(service.get("name") or "")
         if not name:
             continue
-        result = _run_command(["sc.exe", "sdshow", name], timeout=5)
+        result = _run_command([_windows_system_tool("sc.exe"), "sdshow", name], timeout=5)
         if not result or result.returncode != 0 or not service_sddl_has_weak_permissions(result.stdout):
             continue
         findings.append(
@@ -593,7 +613,7 @@ def check_weak_service_permissions(services: Iterable[dict[str, str]] | None = N
 def query_scheduled_tasks() -> list[dict[str, str]]:
     if platform.system() != "Windows":
         return []
-    result = _run_command(["schtasks.exe", "/Query", "/FO", "CSV", "/V"], timeout=25)
+    result = _run_command([_windows_system_tool("schtasks.exe"), "/Query", "/FO", "CSV", "/V"], timeout=25)
     if not result or result.returncode != 0:
         return []
     tasks: list[dict[str, str]] = []
@@ -668,7 +688,7 @@ def check_path_directories() -> list[Finding]:
 def check_whoami_privileges() -> list[Finding]:
     if platform.system() != "Windows":
         return []
-    result = _run_command(["whoami.exe", "/priv"], timeout=10)
+    result = _run_command([_windows_system_tool("whoami.exe"), "/priv"], timeout=10)
     if not result or result.returncode != 0:
         return []
     findings: list[Finding] = []

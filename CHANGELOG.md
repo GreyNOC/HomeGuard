@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.10.0 - This-device Overview, clearable risks + security hardening (2026-06-27)
+
+Ships the device-scoped Overview / clearable-risk work and a full security + functional QA/QC pass over the app. All 377 tests pass and the security release-gate preflight is green.
+
+### This-computer Overview
+- The **Overview** is now scoped to *this computer only*. The scan runner attaches a `scan_metadata.this_device` summary (this host's own findings + endpoint/malware findings, recomputed risk/score, severity counts, and this PC's open services); the Risk / Alerts / Recommended / Protection cards read from it, and the "Devices" card becomes **Open Services** for this PC. Other LAN devices stay on the Devices / Network Map / Findings tabs and no longer drive the Overview.
+
+### Clearable, sticky risks
+- **Clear a risk and have it stay cleared.** Findings now carry a stable `signature` (rule + device + a stable evidence discriminator such as a file path or port, not the volatile `finding_id`). A signature-keyed `cleared_findings` settings block persists dismissals; `engine.build_report` and the scan runner filter cleared findings out before scoring, so the same risk is not re-flagged on later scans (even after a definitions update). Cleared findings are recorded in `scan_metadata` for review/restore.
+- Wiring: CLI `clear-risk` / `restore-risk` / `cleared-risks`; Electron IPC + preload `risks.{clear,restore,listCleared}` with the signature validated to `sig_<hex>`; a per-finding **Clear risk** button and a **Cleared risks** view with restore on the Findings tab; the Overview refreshes after clear/restore.
+
+### Security fixes
+- **Fixed a report-generation denial-of-service (ReDoS) in the privacy scrubber.** The `AppData`-path redaction in `privacy.py` used overlapping unbounded quantifiers that backtracked catastrophically — O(n²), ~24s on a 100 KB delimiter-free string such as an attacker-chosen device hostname — stalling every scan's report phase. Rewrote it as a single linear token pass (now ~4 ms on the same input) and added a defensive length cap. Mirrored the same linear fix in `electron/privacy_utils.js`.
+- **Stopped sending the Gemini API key in the URL query string.** `ai_bridge.py` now passes the key in the `x-goog-api-key` header so the secret can't leak into proxy/CDN access logs or any incidental logging of the request URL (the other providers already used headers).
+- **Broadened secret redaction** in both `privacy.py` and `privacy_utils.js` to catch HTTP `Bearer` tokens, secrets carried in URL query parameters (e.g. `?key=…`), and well-known provider key prefixes (GitHub `ghp_…`, OpenAI `sk-…`, AWS `AKIA…`, Slack `xox…`) that the previous "keyword = value" pattern missed.
+- **Required HTTPS for the signed hash-feed URL.** `update_hashes_from_url` now rejects non-`https` schemes, preventing clear-text fetches and blocking `file://`/`gopher://` from being abused as an SSRF primitive (feed integrity was already protected by the RSA signature gate).
+- **PATH-hijack hardening:** the elevated Windows enumeration calls (`powershell.exe`, `reg.exe`, `schtasks.exe`, `sc.exe`, `whoami.exe`) now resolve to their absolute `%SystemRoot%\System32` paths, so a binary planted in a user-writable PATH entry can't run in place of the genuine system tool. Falls back to the bare name when the expected file is absent.
+- **Defense-in-depth argument-injection guards:** validate the IP passed to `nbtstat`/`nmblookup` and reject an SSH key path beginning with `-` in `flow_source`.
+
+### Supply chain & CI
+- **Pinned every GitHub Action to a full commit SHA** (checkout, setup-python, setup-node, upload-artifact, and the third-party SignPath signing action) across all three workflows, closing the floating-tag hijack exposure in the release/signing pipeline.
+
+### Mobile
+- Dropped the unused `ACCESS_WIFI_STATE` and `CHANGE_WIFI_MULTICAST_STATE` Android permissions — the build only needs `INTERNET` + `ACCESS_NETWORK_STATE`.
+
 ## 1.9.0 - Live Overview dashboard + consumer-safety polish (2026-06-15)
 
 ### Live Overview dashboard
