@@ -201,6 +201,10 @@ class OpenWrtConntrackSource:
             raise FlowSourceError(f"Invalid router host: {self.host!r}")
         if self.user and (self.user.startswith("-") or not _SAFE_USER_RE.match(self.user)):
             raise FlowSourceError(f"Invalid SSH user: {self.user!r}")
+        # A key path that begins with "-" could be misread by the ssh client as
+        # an option rather than the value of -i; reject it the same way.
+        if self.key_path and self.key_path.startswith("-"):
+            raise FlowSourceError(f"Invalid SSH key path: {self.key_path!r}")
         try:
             result = subprocess.run(
                 self._ssh_args(),

@@ -833,8 +833,12 @@ def _chat_gemini(messages: list[dict[str, str]], *, settings: AISettings, api_ke
     for message in messages:
         role = "model" if message.get("role") == "assistant" else "user"
         contents.append({"role": role, "parts": [{"text": f"{message.get('role', 'user')}: {message.get('content', '')}"}]})
+    # Send the key in the x-goog-api-key header, never as a ?key= query
+    # parameter: a URL-embedded secret leaks into proxy/CDN access logs and any
+    # incidental logging of the request URL. The header form is equivalent for
+    # the Gemini REST API.
     data = _post_json(
-        f"{endpoint}?key={api_key}",
+        endpoint,
         {
             "contents": contents,
             "generationConfig": {
@@ -842,7 +846,7 @@ def _chat_gemini(messages: list[dict[str, str]], *, settings: AISettings, api_ke
                 "maxOutputTokens": settings.max_output_tokens,
             },
         },
-        {},
+        {"x-goog-api-key": api_key},
     )
     candidates = data.get("candidates") or []
     parts = (((candidates[0] if candidates else {}).get("content") or {}).get("parts") or [])

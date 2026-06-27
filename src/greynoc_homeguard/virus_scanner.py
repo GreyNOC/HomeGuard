@@ -31,6 +31,25 @@ from .windows_privesc_audit import run_windows_privesc_audit
 LOG = get_logger("virus_scanner")
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+
+def _windows_system_tool(name: str) -> str:
+    """Resolve a Windows system binary to its absolute path under %SystemRoot%.
+
+    Some of these enumeration calls can run inside an elevated process.
+    Resolving by absolute path stops a binary planted in a user-writable PATH
+    entry from being executed in place of the genuine system tool — exactly the
+    weakness this product audits for. Falls back to the bare name when the
+    expected file is absent so unusual installs behave as before.
+    """
+    if platform.system() != "Windows":
+        return name
+    system_root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
+    if name.lower() == "powershell.exe":
+        candidate = os.path.join(system_root, "System32", "WindowsPowerShell", "v1.0", name)
+    else:
+        candidate = os.path.join(system_root, "System32", name)
+    return candidate if os.path.isfile(candidate) else name
+
 SEVERITY_SCORE = {"critical": 95.0, "high": 78.0, "medium": 54.0, "low": 26.0, "info": 8.0}
 PRIORITY = {"critical": "P1", "high": "P2", "medium": "P3", "low": "P4", "info": "P4"}
 
@@ -518,7 +537,7 @@ def scan_downloads(
 def _run_json_powershell(script: str, *, timeout: int = 20) -> Any:
     try:
         result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", script],
+            [_windows_system_tool("powershell.exe"), "-NoProfile", "-Command", script],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -638,7 +657,7 @@ def _registry_run_values() -> list[dict[str, str]]:
     for key in keys:
         try:
             result = subprocess.run(
-                ["reg.exe", "query", key],
+                [_windows_system_tool("reg.exe"), "query", key],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -660,7 +679,7 @@ def _scheduled_tasks() -> list[dict[str, str]]:
         return []
     try:
         result = subprocess.run(
-            ["schtasks.exe", "/Query", "/FO", "CSV", "/V"],
+            [_windows_system_tool("schtasks.exe"), "/Query", "/FO", "CSV", "/V"],
             capture_output=True,
             text=True,
             timeout=25,

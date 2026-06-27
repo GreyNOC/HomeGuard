@@ -11,8 +11,10 @@ fullscreen = 0
 
 # Android permissions appropriate for a network awareness app on a mobile
 # device. Note: ARP table access is restricted on modern Android; the mobile
-# build relies on socket fallbacks.
-android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_WIFI_STATE,CHANGE_WIFI_MULTICAST_STATE
+# build relies on socket fallbacks. Scoped to what main.py actually uses
+# (outbound socket probing + connectivity state) — CHANGE_WIFI_MULTICAST_STATE
+# and ACCESS_WIFI_STATE were unused grants and have been dropped.
+android.permissions = INTERNET,ACCESS_NETWORK_STATE
 android.api = 34
 android.minapi = 24
 android.archs = arm64-v8a, armeabi-v7a

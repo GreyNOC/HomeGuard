@@ -38,6 +38,7 @@ import hmac
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .logging_setup import get_logger
 
@@ -215,6 +216,12 @@ def update_hashes_from_url(
     """Download a signed hash feed and apply it after signature verification."""
     from .definitions import _http_json
 
+    # The signature gate below already protects feed *integrity*, but require
+    # HTTPS so the feed URL never travels in clear text and so non-web schemes
+    # (file://, gopher://, …) can't be abused as an SSRF primitive against the
+    # local host via a crafted settings/CLI value.
+    if urlsplit(url).scheme.lower() != "https":
+        return {"ok": False, "verified": False, "message": "Hash feed URL must use https://."}
     try:
         document = _http_json(url, timeout=timeout)
     except Exception as exc:
